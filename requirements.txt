@@ -1,0 +1,6 @@
+pandas
+python-dotenv
+supabase
+streamlit
+dune-client
+requests
