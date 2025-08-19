@@ -4,30 +4,54 @@ import json
 from datetime import datetime
 import time
 import os
-from dotenv import load_dotenv
 from dune_client.client import DuneClient
 from supabase import create_client, Client
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Configuration - Modularized API keys using environment variables
 class Config:
     """Configuration class to load API keys and settings from environment variables"""
     def __init__(self):
-        # Load API keys from environment variables
-        self.dune_sim_api_key = os.getenv('DUNE_SIM_API_KEY')
-        self.dune_client_api_key = os.getenv('DUNE_CLIENT_API_KEY')
+        # Load environment variables from .env file
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except ImportError:
+            print("Warning: python-dotenv not installed. Using system environment variables only.")
         
-        # Supabase configuration from environment variables
-        self.supabase_url = os.getenv('SUPABASE_URL')
-        self.supabase_key = os.getenv('SUPABASE_KEY')
-        self.table_name = os.getenv('SUPABASE_TABLE_NAME', 'validator_data')  # Default fallback
+        # Helper function to get configuration values
+        def get_config_value(key, default=None):
+            # First try environment variables (works for both standalone and Streamlit)
+            import os
+            value = os.getenv(key)
+            if value:
+                return value
+            
+            # Only try Streamlit secrets if we're in a Streamlit context
+            try:
+                # Check if we're running in Streamlit context
+                import streamlit as st
+                # This will only work if we're actually in a Streamlit app
+                if hasattr(st, 'secrets') and st.secrets is not None:
+                    return st.secrets.get(key, default)
+            except (ImportError, Exception):
+                # Not in Streamlit context or secrets not available
+                pass
+            
+            return default
+        
+        # Load API keys from configuration
+        self.dune_sim_api_key = get_config_value('DUNE_SIM_API_KEY')
+        self.dune_client_api_key = get_config_value('DUNE_CLIENT_API_KEY')
+        
+        # Supabase configuration
+        self.supabase_url = get_config_value('SUPABASE_URL')
+        self.supabase_key = get_config_value('SUPABASE_KEY')
+        self.table_name = get_config_value('SUPABASE_TABLE_NAME', 'validator_data')
         
         # Other configuration
-        self.batch_size = int(os.getenv('BATCH_SIZE', 100))  # Default 100
-        self.delay_seconds = int(os.getenv('DELAY_SECONDS', 15))  # Default 15
-        self.api_delay = float(os.getenv('API_DELAY', 0.25))  # Default 0.25
+        self.batch_size = int(get_config_value('BATCH_SIZE', 100))
+        self.delay_seconds = int(get_config_value('DELAY_SECONDS', 15))
+        self.api_delay = float(get_config_value('API_DELAY', 0.25))
         
         # Validate required environment variables
         self._validate_config()
@@ -47,7 +71,12 @@ class Config:
                 missing_vars.append(var_name)
         
         if missing_vars:
-            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+            error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+            print(f"Error: {error_msg}")
+            print("\nPlease ensure your .env file contains:")
+            for var in missing_vars:
+                print(f"  {var}=your_value_here")
+            raise ValueError(error_msg)
         
         print("✓ All required environment variables loaded successfully")
 
