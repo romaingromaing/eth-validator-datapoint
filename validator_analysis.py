@@ -298,7 +298,7 @@ def save_to_supabase(df, config):
         
         # Convert DataFrame to list of dictionaries
         # Handle NaN values by replacing them with None
-        data = df.fillna(value=None).to_dict('records')
+        data = df.to_dict('records')
         
         print(f"Preparing to overwrite table '{config.table_name}' with {len(data)} records...")
         
