@@ -7,6 +7,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import numpy as np
+import subprocess
+import sys
+import threading
+import queue
+import time
+import json
 
 # Load environment variables from .env file
 load_dotenv()
@@ -56,23 +62,172 @@ def load_data_from_supabase():
         st.error(f"Error loading data from Supabase: {e}")
         return pd.DataFrame()
 
-def main():
-    st.set_page_config(
-        page_title="Validator Analysis Dashboard",
-        page_icon="🔍",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
+def run_validator_analysis():
+    """
+    Run the validator analysis script and capture output in real-time
+    """
+    try:
+        # Create a process to run the validator analysis
+        process = subprocess.Popen(
+            [sys.executable, "validator_analysis.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1
+        )
+        
+        # Read output line by line
+        output_lines = []
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                output_lines.append(line.strip())
+                yield line.strip()
+        
+        process.stdout.close()
+        return_code = process.wait()
+        
+        if return_code != 0:
+            yield f"❌ Process finished with error code: {return_code}"
+        else:
+            yield "✅ Validator analysis completed successfully!"
+            
+    except Exception as e:
+        yield f"❌ Error running validator analysis: {str(e)}"
+
+def analysis_tab():
+    """
+    Tab for running the validator analysis
+    """
+    st.header("🚀 Run Validator Analysis")
     
-    st.title("🔍 Validator Analysis Dashboard")
-    st.markdown("---")
+    st.markdown("""
+    This will run the complete validator analysis pipeline:
+    1. Load validator data from JSON file
+    2. Fetch deposit addresses from BeaconChain API
+    3. Get transaction data from Dune API
+    4. Check for smart contract deployments
+    5. Identify DEX addresses
+    6. Save results to Supabase
+    """)
+    
+    # Check if required files exist
+    required_files = ["validator_analysis.py", "0x00-validators.json"]
+    missing_files = [f for f in required_files if not os.path.exists(f)]
+    
+    if missing_files:
+        st.error(f"Missing required files: {', '.join(missing_files)}")
+        st.info("Please ensure all required files are in the same directory as this Streamlit app.")
+        return
+    
+    # Environment variables check
+    env_vars = ['DUNE_SIM_API_KEY', 'DUNE_CLIENT_API_KEY', 'SUPABASE_URL', 'SUPABASE_KEY']
+    missing_env = [var for var in env_vars if not os.getenv(var)]
+    
+    if missing_env:
+        st.error(f"Missing environment variables: {', '.join(missing_env)}")
+        st.info("Please set all required environment variables in your .env file.")
+        return
+    
+    st.success("✅ All requirements met. Ready to run analysis!")
+    
+    col1, col2 = st.columns([1, 3])
+    
+    with col1:
+        if st.button("🔄 Run Analysis", type="primary", use_container_width=True):
+            st.session_state.run_analysis = True
+    
+    with col2:
+        if st.button("🔄 Refresh Dashboard", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+    
+    # Run analysis if button was clicked
+    if st.session_state.get('run_analysis', False):
+        st.markdown("---")
+        st.subheader("📊 Analysis Progress")
+        
+        # Create containers for different types of output
+        progress_container = st.container()
+        output_container = st.container()
+        
+        with progress_container:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+        
+        with output_container:
+            output_text = st.empty()
+        
+        # Run the analysis
+        output_lines = []
+        total_steps = 6  # Approximate number of major steps
+        current_step = 0
+        
+        try:
+            for line in run_validator_analysis():
+                output_lines.append(line)
+                
+                # Update progress based on key milestones
+                if "All required environment variables loaded successfully" in line:
+                    current_step = 1
+                    status_text.text("✓ Environment variables loaded")
+                elif "Processing batch" in line:
+                    current_step = 2
+                    status_text.text("🔄 Fetching deposit addresses...")
+                elif "Fetching and analyzing transaction data" in line:
+                    current_step = 3
+                    status_text.text("🔄 Analyzing transaction data...")
+                elif "ethereum-dex-addresses" in line:
+                    current_step = 4
+                    status_text.text("🔄 Checking DEX addresses...")
+                elif "Saved to" in line and "csv" in line:
+                    current_step = 5
+                    status_text.text("✓ Data saved to CSV")
+                elif "Successfully overwritten Supabase table" in line:
+                    current_step = 6
+                    status_text.text("✅ Data uploaded to Supabase")
+                
+                # Update progress bar
+                progress = min(current_step / total_steps, 1.0)
+                progress_bar.progress(progress)
+                
+                # Show recent output (last 20 lines)
+                recent_output = output_lines[-20:] if len(output_lines) > 20 else output_lines
+                output_text.text_area(
+                    "Real-time Output",
+                    value="\n".join(recent_output),
+                    height=300,
+                    key=f"output_{len(output_lines)}"
+                )
+                
+                # Small delay to make updates visible
+                time.sleep(0.1)
+        
+        except Exception as e:
+            st.error(f"Error during analysis: {str(e)}")
+        
+        finally:
+            # Reset the run analysis flag
+            st.session_state.run_analysis = False
+            
+            # Show completion message
+            if current_step >= 6:
+                st.success("🎉 Analysis completed successfully! Data has been updated in Supabase.")
+                st.balloons()
+            else:
+                st.warning("⚠️ Analysis may not have completed successfully. Check the output above.")
+
+def dashboard_tab():
+    """
+    Original dashboard functionality
+    """
+    st.header("🔍 Validator Analysis Dashboard")
     
     # Load data
     with st.spinner("Loading data from Supabase..."):
         df = load_data_from_supabase()
     
     if df.empty:
-        st.warning("No data available. Please check your Supabase connection and ensure data has been uploaded.")
+        st.warning("No data available. Please run the validator analysis first or check your Supabase connection.")
         return
     
     # Sidebar filters
@@ -229,25 +384,36 @@ def main():
     
     # Download section
     st.subheader("Export Data")
-    col1, col2 = st.columns(2)
+    csv = filtered_df.to_csv(index=False)
+    st.download_button(
+        label="Download as CSV",
+        data=csv,
+        file_name=f"validator_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv"
+    )
+
+def main():
+    st.set_page_config(
+        page_title="Validator Analysis Dashboard",
+        page_icon="🔍",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
     
-    with col1:
-        csv = filtered_df.to_csv(index=False)
-        st.download_button(
-            label="Download as CSV",
-            data=csv,
-            file_name=f"validator_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
+    st.title("🔍 Validator Analysis Platform")
     
-    with col2:
-        if st.button("Refresh Data"):
-            st.cache_data.clear()
-            st.rerun()
+    # Create tabs
+    tab1, tab2 = st.tabs(["🚀 Run Analysis", "📊 Dashboard"])
+    
+    with tab1:
+        analysis_tab()
+    
+    with tab2:
+        dashboard_tab()
     
     # Footer
     st.markdown("---")
-    st.markdown("*Data refreshes automatically every 5 minutes*")
+    st.markdown("*Use the 'Run Analysis' tab to update data, then view results in the 'Dashboard' tab*")
 
 if __name__ == "__main__":
     main()
