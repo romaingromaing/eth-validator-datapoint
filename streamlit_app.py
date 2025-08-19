@@ -20,13 +20,41 @@ load_dotenv()
 # Configuration
 class Config:
     def __init__(self):
-        self.supabase_url = os.getenv('SUPABASE_URL')
-        self.supabase_key = os.getenv('SUPABASE_KEY')
-        self.table_name = os.getenv('SUPABASE_TABLE_NAME', 'validator_data')
+        # Helper function to get secrets from either Streamlit secrets or environment variables
+        def get_secret(key, default=None):
+            # Try Streamlit secrets first with proper error handling
+            try:
+                if hasattr(st, 'secrets') and st.secrets is not None:
+                    return st.secrets.get(key)
+            except Exception:
+                # If secrets.toml doesn't exist or has issues, continue to env vars
+                pass
+            
+            # Fall back to environment variables
+            import os
+            try:
+                from dotenv import load_dotenv
+                load_dotenv()
+            except ImportError:
+                pass  # dotenv might not be installed
+            return os.getenv(key, default)
+        
+        self.supabase_url = get_secret('SUPABASE_URL')
+        self.supabase_key = get_secret('SUPABASE_KEY')
+        self.table_name = get_secret('SUPABASE_TABLE_NAME', 'validator_data')
         
         # Validate required environment variables
         if not self.supabase_url or not self.supabase_key:
-            st.error("Missing SUPABASE_URL or SUPABASE_KEY in environment variables")
+            st.error("Missing SUPABASE_URL or SUPABASE_KEY in configuration")
+            st.info("""
+            **For local development:** Make sure your `.env` file contains:
+            ```
+            SUPABASE_URL=your_supabase_url
+            SUPABASE_KEY=your_supabase_key
+            ```
+            
+            **For Streamlit Cloud:** Add these to your app's Secrets in the dashboard.
+            """)
             st.stop()
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
@@ -61,6 +89,39 @@ def load_data_from_supabase():
     except Exception as e:
         st.error(f"Error loading data from Supabase: {e}")
         return pd.DataFrame()
+
+def check_environment_variables():
+    """
+    Check if all required environment variables/secrets are available
+    Returns: (bool, list) - (all_present, missing_vars)
+    """
+    def get_secret(key):
+        # Try Streamlit secrets first, with proper error handling
+        try:
+            if hasattr(st, 'secrets') and st.secrets is not None:
+                return st.secrets.get(key)
+        except Exception:
+            # If secrets.toml doesn't exist or has issues, continue to env vars
+            pass
+        
+        # Fall back to environment variables
+        import os
+        return os.getenv(key)
+    
+    required_vars = [
+        'DUNE_SIM_API_KEY',
+        'DUNE_CLIENT_API_KEY', 
+        'SUPABASE_URL',
+        'SUPABASE_KEY'
+    ]
+    
+    missing_vars = []
+    for var in required_vars:
+        value = get_secret(var)
+        if not value:
+            missing_vars.append(var)
+    
+    return len(missing_vars) == 0, missing_vars
 
 def run_validator_analysis():
     """
