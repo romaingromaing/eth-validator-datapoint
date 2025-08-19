@@ -4,3 +4,5 @@ supabase
 streamlit
 dune-client
 requests
+plotly
+numpy
