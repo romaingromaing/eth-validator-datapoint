@@ -127,23 +127,40 @@ def check_environment_variables():
 
 def run_validator_analysis():
     """
-    Run the validator analysis script and capture output in real-time with enhanced monitoring
+    Run the validator analysis script and capture ALL output in real-time with enhanced monitoring
     """
     try:
-        # Create a process to run the validator analysis with unbuffered output
+        # Create a process to run the validator analysis with maximum output capture
         process = subprocess.Popen(
             [sys.executable, "-u", "validator_analysis.py"],  # -u for unbuffered output
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.STDOUT,  # Merge stderr with stdout
             universal_newlines=True,
-            bufsize=0,  # Unbuffered
-            env=os.environ.copy()  # Pass all environment variables
+            bufsize=0,  # Completely unbuffered
+            env=os.environ.copy(),  # Pass all environment variables
+            cwd=os.getcwd()  # Ensure correct working directory
         )
         
-        # Read output line by line in real-time
-        for line in iter(process.stdout.readline, ''):
-            if line.strip():  # Only yield non-empty lines
-                yield line.strip()
+        # Read output character by character for maximum real-time capture
+        output_buffer = ""
+        while True:
+            # Read one character at a time to avoid buffering
+            char = process.stdout.read(1)
+            if not char:
+                # Process has ended
+                break
+            
+            output_buffer += char
+            
+            # When we hit a newline, yield the complete line
+            if char == '\n' or char == '\r':
+                if output_buffer.strip():  # Only yield non-empty lines
+                    yield output_buffer.strip()
+                output_buffer = ""
+        
+        # Yield any remaining output
+        if output_buffer.strip():
+            yield output_buffer.strip()
         
         process.stdout.close()
         return_code = process.wait()
@@ -327,7 +344,7 @@ def analysis_tab():
             with col1:
                 st.subheader("📝 Real-time Output")
             with col2:
-                show_all_output = st.checkbox("Show all output", value=False)
+                show_all_output = st.checkbox("Show all output", value=True)  # Default to True
             
             output_text = st.empty()
         
@@ -337,6 +354,13 @@ def analysis_tab():
         current_progress = 0
         current_step = "Starting..."
         
+        # Store output in session state to persist after completion
+        if 'analysis_output' not in st.session_state:
+            st.session_state.analysis_output = []
+        
+        # Clear previous output when starting new analysis
+        st.session_state.analysis_output = []
+        
         try:
             for line in run_validator_analysis():
                 if st.session_state.get('analysis_stopped', False):
@@ -344,6 +368,8 @@ def analysis_tab():
                     break
                 
                 output_lines.append(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
+                # Also store in session state for persistence
+                st.session_state.analysis_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
                 
                 # Parse progress from output
                 step_name, progress, description = parse_progress_from_output(line)
@@ -384,6 +410,8 @@ def analysis_tab():
                     metrics['success_rate'].metric("✅ Success Rate", f"{success_rate:.1f}%")
                 
                 # Update output display using st.code to preserve scroll and readability
+                show_all_output = st.session_state.get('show_all_output', True)
+                
                 if show_all_output:
                     display_lines = output_lines
                 else:
@@ -417,7 +445,9 @@ def analysis_tab():
         
         except Exception as e:
             st.error(f"❌ Error during analysis: {str(e)}")
-            output_lines.append(f"[ERROR] {str(e)}")
+            error_msg = f"[ERROR] {str(e)}"
+            output_lines.append(error_msg)
+            st.session_state.analysis_output.append(error_msg)
         
         finally:
             # Final status update
@@ -447,15 +477,87 @@ def analysis_tab():
             st.session_state.run_analysis = False
             st.session_state.analysis_stopped = False
             
+            # Show final output after completion (persisted)
+            if st.session_state.analysis_output:
+                st.subheader("📝 Final Analysis Output")
+                show_all_final = st.session_state.get('show_all_output', True)
+                
+                if show_all_final:
+                    final_display_lines = st.session_state.analysis_output
+                else:
+                    final_display_lines = st.session_state.analysis_output[-25:] if len(st.session_state.analysis_output) > 25 else st.session_state.analysis_output
+                
+                # Format final output
+                final_formatted_output = []
+                for output_line in final_display_lines:
+                    if "✓" in output_line:
+                        final_formatted_output.append(f"✅ {output_line}")
+                    elif "✗" in output_line or "Error" in output_line:
+                        final_formatted_output.append(f"❌ {output_line}")
+                    elif "Processing batch" in output_line:
+                        final_formatted_output.append(f"🔄 {output_line}")
+                    elif "Found" in output_line and "transactions" in output_line:
+                        final_formatted_output.append(f"📊 {output_line}")
+                    else:
+                        final_formatted_output.append(f"   {output_line}")
+                
+                st.code(
+                    "\n".join(final_formatted_output),
+                    language=None,
+                    line_numbers=False
+                )
+            
             # Option to download log
-            if output_lines:
-                log_content = "\n".join(output_lines)
+            if st.session_state.analysis_output:
+                log_content = "\n".join(st.session_state.analysis_output)
                 st.download_button(
                     label="📥 Download Analysis Log",
                     data=log_content,
                     file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                     mime="text/plain"
                 )
+    
+    # Show previous analysis output if available (outside the analysis block)
+    elif st.session_state.get('analysis_output'):
+        st.markdown("---")
+        st.subheader("📝 Previous Analysis Output")
+        st.info("Previous analysis results are shown below. Click 'Start Analysis' to run a new analysis.")
+        
+        show_all_previous = st.checkbox("Show all previous output", value=True, key="previous_output_checkbox")
+        
+        if show_all_previous:
+            previous_display_lines = st.session_state.analysis_output
+        else:
+            previous_display_lines = st.session_state.analysis_output[-25:] if len(st.session_state.analysis_output) > 25 else st.session_state.analysis_output
+        
+        # Format previous output
+        previous_formatted_output = []
+        for output_line in previous_display_lines:
+            if "✓" in output_line:
+                previous_formatted_output.append(f"✅ {output_line}")
+            elif "✗" in output_line or "Error" in output_line:
+                previous_formatted_output.append(f"❌ {output_line}")
+            elif "Processing batch" in output_line:
+                previous_formatted_output.append(f"🔄 {output_line}")
+            elif "Found" in output_line and "transactions" in output_line:
+                previous_formatted_output.append(f"📊 {output_line}")
+            else:
+                previous_formatted_output.append(f"   {output_line}")
+        
+        st.code(
+            "\n".join(previous_formatted_output),
+            language=None,
+            line_numbers=False
+        )
+        
+        # Option to download previous log
+        log_content = "\n".join(st.session_state.analysis_output)
+        st.download_button(
+            label="📥 Download Previous Analysis Log",
+            data=log_content,
+            file_name=f"previous_analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain"
+        )
 
 def dashboard_tab():
     """
