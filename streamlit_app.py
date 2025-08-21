@@ -383,53 +383,34 @@ def analysis_tab():
                     success_rate = (success_count / (success_count + error_count)) * 100
                     metrics['success_rate'].metric("✅ Success Rate", f"{success_rate:.1f}%")
                 
-                # Update output display using markdown to preserve scroll position
+                # Update output display using st.code to preserve scroll and readability
                 if show_all_output:
                     display_lines = output_lines
                 else:
                     # Show last 25 lines for better readability
                     display_lines = output_lines[-25:] if len(output_lines) > 25 else output_lines
                 
-                # Format output with color coding for markdown
+                # Format output with simple text formatting
                 formatted_output = []
                 for output_line in display_lines:
                     if "✓" in output_line:
-                        formatted_output.append(f"✅ `{output_line}`")
+                        formatted_output.append(f"✅ {output_line}")
                     elif "✗" in output_line or "Error" in output_line:
-                        formatted_output.append(f"❌ `{output_line}`")
+                        formatted_output.append(f"❌ {output_line}")
                     elif "Processing batch" in output_line:
-                        formatted_output.append(f"🔄 `{output_line}`")
+                        formatted_output.append(f"🔄 {output_line}")
                     elif "Found" in output_line and "transactions" in output_line:
-                        formatted_output.append(f"📊 `{output_line}`")
+                        formatted_output.append(f"📊 {output_line}")
                     else:
-                        formatted_output.append(f"&nbsp;&nbsp;&nbsp;`{output_line}`")
+                        formatted_output.append(f"   {output_line}")
                 
-                # Use a scrollable container with HTML/CSS
-                output_html = f"""
-                <div style="
-                    height: 400px; 
-                    overflow-y: auto; 
-                    border: 1px solid #ccc; 
-                    padding: 10px; 
-                    background-color: #f8f9fa;
-                    font-family: 'Courier New', monospace;
-                    font-size: 12px;
-                    border-radius: 5px;
-                ">
-                    <div style="white-space: pre-wrap;">
-                        {'<br>'.join(formatted_output)}
-                    </div>
-                    <script>
-                        // Auto-scroll to bottom
-                        var div = document.querySelector('div[style*="overflow-y: auto"]');
-                        if (div) {{
-                            div.scrollTop = div.scrollHeight;
-                        }}
-                    </script>
-                </div>
-                """
-                
-                output_text.html(output_html)
+                # Use st.code with a unique key to minimize re-rendering
+                with output_text.container():
+                    st.code(
+                        "\n".join(formatted_output),
+                        language=None,
+                        line_numbers=False
+                    )
                 
                 # Small delay to prevent UI freezing
                 time.sleep(0.05)
