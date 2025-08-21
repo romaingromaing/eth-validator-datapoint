@@ -59,7 +59,7 @@ class Config:
         
         # Other configuration
         self.batch_size = int(get_config_value('BATCH_SIZE', 100))
-        self.delay_seconds = int(get_config_value('DELAY_SECONDS', 6))
+        self.delay_seconds = int(get_config_value('DELAY_SECONDS', 7))
         self.api_delay = float(get_config_value('API_DELAY', 0.25))
         
         # Validate required environment variables
