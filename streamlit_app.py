@@ -51,6 +51,7 @@ class Config:
             ```
             SUPABASE_URL=your_supabase_url
             SUPABASE_KEY=your_supabase_key
+            SUPABASE_DATABASE_URL=your_database_connection_string
             ```
             
             **For Streamlit Cloud:** Add these to your app's Secrets in the dashboard.
@@ -112,7 +113,8 @@ def check_environment_variables():
         'DUNE_SIM_API_KEY',
         'DUNE_CLIENT_API_KEY', 
         'SUPABASE_URL',
-        'SUPABASE_KEY'
+        'SUPABASE_KEY',
+        'SUPABASE_DATABASE_URL'  # Added this for direct CSV upload
     ]
     
     missing_vars = []
@@ -125,23 +127,22 @@ def check_environment_variables():
 
 def run_validator_analysis():
     """
-    Run the validator analysis script and capture output in real-time
+    Run the validator analysis script and capture output in real-time with enhanced monitoring
     """
     try:
-        # Create a process to run the validator analysis
+        # Create a process to run the validator analysis with unbuffered output
         process = subprocess.Popen(
-            [sys.executable, "validator_analysis.py"],
+            [sys.executable, "-u", "validator_analysis.py"],  # -u for unbuffered output
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
-            bufsize=1
+            bufsize=0,  # Unbuffered
+            env=os.environ.copy()  # Pass all environment variables
         )
         
-        # Read output line by line
-        output_lines = []
+        # Read output line by line in real-time
         for line in iter(process.stdout.readline, ''):
-            if line:
-                output_lines.append(line.strip())
+            if line.strip():  # Only yield non-empty lines
                 yield line.strip()
         
         process.stdout.close()
@@ -155,20 +156,67 @@ def run_validator_analysis():
     except Exception as e:
         yield f"❌ Error running validator analysis: {str(e)}"
 
+def parse_progress_from_output(line):
+    """
+    Parse progress information from output line
+    Returns: (step_name, percentage, description)
+    """
+    progress_patterns = {
+        "environment variables loaded": ("Environment Setup", 5, "Loading configuration..."),
+        "Starting processing": ("Data Loading", 10, "Loading validator data..."),
+        "Processing batch": ("Deposit Addresses", 30, "Fetching deposit addresses..."),
+        "Fetching and analyzing transaction data": ("Transaction Analysis", 50, "Analyzing transactions..."),
+        "ethereum-dex-addresses": ("DEX Analysis", 70, "Checking DEX addresses..."),
+        "Saved to": ("CSV Export", 85, "Saving data to CSV..."),
+        "Clearing existing data": ("Database Cleanup", 90, "Preparing database..."),
+        "Successfully uploaded CSV": ("Upload Complete", 100, "Data uploaded to Supabase!")
+    }
+    
+    for pattern, (step, percentage, desc) in progress_patterns.items():
+        if pattern.lower() in line.lower():
+            return step, percentage, desc
+    
+    # Extract batch progress if available
+    if "Processing batch" in line and "/" in line:
+        try:
+            # Extract numbers from "Processing batch X/Y"
+            parts = line.split("Processing batch")[1].split("(")[0].strip()
+            current, total = parts.split("/")
+            current, total = int(current), int(total)
+            batch_progress = (current / total) * 20 + 10  # Scale to 10-30% range
+            return "Deposit Addresses", batch_progress, f"Processing batch {current}/{total}"
+        except:
+            pass
+    
+    # Extract transaction progress if available
+    if "[" in line and "]" in line and "Processing:" in line:
+        try:
+            # Extract numbers from "[X/Y] Processing:"
+            bracket_content = line.split("[")[1].split("]")[0]
+            current, total = bracket_content.split("/")
+            current, total = int(current), int(total)
+            tx_progress = (current / total) * 20 + 50  # Scale to 50-70% range
+            return "Transaction Analysis", tx_progress, f"Analyzing transaction {current}/{total}"
+        except:
+            pass
+    
+    return None, None, None
+
 def analysis_tab():
     """
-    Tab for running the validator analysis
+    Enhanced tab for running the validator analysis with real-time progress
     """
     st.header("🚀 Run Validator Analysis")
     
     st.markdown("""
     This will run the complete validator analysis pipeline:
-    1. Load validator data from JSON file
-    2. Fetch deposit addresses from BeaconChain API
-    3. Get transaction data from Dune API
-    4. Check for smart contract deployments
-    5. Identify DEX addresses
-    6. Save results to Supabase
+    1. **Environment Setup** - Load configuration and validate settings
+    2. **Data Loading** - Load validator data from JSON file
+    3. **Deposit Addresses** - Fetch deposit addresses from BeaconChain API
+    4. **Transaction Analysis** - Get transaction data from Dune API and check for smart contracts
+    5. **DEX Analysis** - Identify DEX addresses using Dune query
+    6. **CSV Export** - Save processed data to CSV file
+    7. **Database Upload** - Upload data directly to Supabase using PostgreSQL COPY
     """)
     
     # Check if required files exist
@@ -180,102 +228,233 @@ def analysis_tab():
         st.info("Please ensure all required files are in the same directory as this Streamlit app.")
         return
     
-    # Environment variables check
-    env_vars = ['DUNE_SIM_API_KEY', 'DUNE_CLIENT_API_KEY', 'SUPABASE_URL', 'SUPABASE_KEY']
-    missing_env = [var for var in env_vars if not os.getenv(var)]
+    # Environment variables check with enhanced validation
+    all_vars_present, missing_vars = check_environment_variables()
     
-    if missing_env:
-        st.error(f"Missing environment variables: {', '.join(missing_env)}")
-        st.info("Please set all required environment variables in your .env file.")
+    if not all_vars_present:
+        st.error(f"Missing environment variables: {', '.join(missing_vars)}")
+        
+        with st.expander("📋 Environment Variables Setup Guide"):
+            st.markdown("""
+            **Required Environment Variables:**
+            
+            ```
+            # Dune API Keys
+            DUNE_SIM_API_KEY=your_dune_sim_api_key
+            DUNE_CLIENT_API_KEY=your_dune_client_api_key
+            
+            # Supabase Configuration
+            SUPABASE_URL=your_supabase_url
+            SUPABASE_KEY=your_supabase_anon_key
+            SUPABASE_DATABASE_URL=postgresql://postgres.xxx:password@aws-x-region.pooler.supabase.com:5432/postgres
+            SUPABASE_TABLE_NAME=validator_data
+            
+            # Optional Configuration
+            BATCH_SIZE=100
+            DELAY_SECONDS=6
+            API_DELAY=0.2
+            ```
+            
+            **For Streamlit Cloud:** Add these to your app's Secrets in the dashboard.
+            **For local development:** Add these to your `.env` file.
+            """)
         return
+    
+    # Show current configuration
+    with st.expander("⚙️ Current Configuration"):
+        config_info = {
+            "Table Name": os.getenv('SUPABASE_TABLE_NAME', 'validator_data'),
+            "Batch Size": os.getenv('BATCH_SIZE', '100'),
+            "API Delay": f"{os.getenv('API_DELAY', '0.2')}s",
+            "Request Delay": f"{os.getenv('DELAY_SECONDS', '6')}s"
+        }
+        
+        for key, value in config_info.items():
+            st.text(f"{key}: {value}")
     
     st.success("✅ All requirements met. Ready to run analysis!")
     
-    col1, col2 = st.columns([1, 3])
+    # Control buttons
+    col1, col2, col3 = st.columns([2, 2, 2])
     
     with col1:
-        if st.button("🔄 Run Analysis", type="primary", use_container_width=True):
+        if st.button("🚀 Start Analysis", type="primary", use_container_width=True):
             st.session_state.run_analysis = True
+            st.session_state.analysis_stopped = False
     
     with col2:
+        if st.button("⏹️ Stop Analysis", use_container_width=True):
+            st.session_state.analysis_stopped = True
+            st.session_state.run_analysis = False
+    
+    with col3:
         if st.button("🔄 Refresh Dashboard", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
     
     # Run analysis if button was clicked
-    if st.session_state.get('run_analysis', False):
+    if st.session_state.get('run_analysis', False) and not st.session_state.get('analysis_stopped', False):
         st.markdown("---")
         st.subheader("📊 Analysis Progress")
         
-        # Create containers for different types of output
+        # Create enhanced progress tracking containers
         progress_container = st.container()
+        metrics_container = st.container()
         output_container = st.container()
         
         with progress_container:
+            # Main progress bar
             progress_bar = st.progress(0)
             status_text = st.empty()
+            
+            # Step-by-step progress
+            col1, col2, col3, col4 = st.columns(4)
+            step_indicators = [col1.empty(), col2.empty(), col3.empty(), col4.empty()]
+        
+        with metrics_container:
+            # Real-time metrics
+            metric_cols = st.columns(4)
+            metrics = {
+                'processed': metric_cols[0].empty(),
+                'success_rate': metric_cols[1].empty(),
+                'elapsed_time': metric_cols[2].empty(),
+                'eta': metric_cols[3].empty()
+            }
         
         with output_container:
+            # Output display options
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.subheader("📝 Real-time Output")
+            with col2:
+                show_all_output = st.checkbox("Show all output", value=False)
+            
             output_text = st.empty()
         
-        # Run the analysis
+        # Initialize tracking variables
         output_lines = []
-        total_steps = 6  # Approximate number of major steps
-        current_step = 0
+        start_time = time.time()
+        current_progress = 0
+        current_step = "Starting..."
         
         try:
             for line in run_validator_analysis():
-                output_lines.append(line)
+                if st.session_state.get('analysis_stopped', False):
+                    st.warning("⚠️ Analysis stopped by user")
+                    break
                 
-                # Update progress based on key milestones
-                if "All required environment variables loaded successfully" in line:
-                    current_step = 1
-                    status_text.text("✓ Environment variables loaded")
-                elif "Processing batch" in line:
-                    current_step = 2
-                    status_text.text("🔄 Fetching deposit addresses...")
-                elif "Fetching and analyzing transaction data" in line:
-                    current_step = 3
-                    status_text.text("🔄 Analyzing transaction data...")
-                elif "ethereum-dex-addresses" in line:
-                    current_step = 4
-                    status_text.text("🔄 Checking DEX addresses...")
-                elif "Saved to" in line and "csv" in line:
-                    current_step = 5
-                    status_text.text("✓ Data saved to CSV")
-                elif "Successfully overwritten Supabase table" in line:
-                    current_step = 6
-                    status_text.text("✅ Data uploaded to Supabase")
+                output_lines.append(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
                 
-                # Update progress bar
-                progress = min(current_step / total_steps, 1.0)
-                progress_bar.progress(progress)
+                # Parse progress from output
+                step_name, progress, description = parse_progress_from_output(line)
+                if step_name:
+                    current_progress = progress
+                    current_step = description or step_name
                 
-                # Show recent output (last 20 lines)
-                recent_output = output_lines[-20:] if len(output_lines) > 20 else output_lines
+                # Update progress indicators
+                progress_bar.progress(min(current_progress / 100, 1.0))
+                status_text.text(f"🔄 {current_step} ({current_progress:.0f}%)")
+                
+                # Update step indicators
+                steps = ["Environment", "Data Loading", "API Calls", "Upload"]
+                for i, indicator in enumerate(step_indicators):
+                    if current_progress > (i + 1) * 25:
+                        indicator.success(f"✅ {steps[i]}")
+                    elif current_progress > i * 25:
+                        indicator.info(f"🔄 {steps[i]}")
+                    else:
+                        indicator.empty()
+                
+                # Update metrics
+                elapsed = time.time() - start_time
+                metrics['elapsed_time'].metric("⏱️ Elapsed", f"{elapsed:.0f}s")
+                
+                # Estimate completion time based on progress
+                if current_progress > 5:
+                    estimated_total = elapsed * (100 / current_progress)
+                    eta = max(0, estimated_total - elapsed)
+                    metrics['eta'].metric("⏳ ETA", f"{eta:.0f}s")
+                
+                # Count successful operations
+                success_count = len([l for l in output_lines if "✓" in l])
+                error_count = len([l for l in output_lines if ("✗" in l or "Error" in l)])
+                
+                if success_count + error_count > 0:
+                    success_rate = (success_count / (success_count + error_count)) * 100
+                    metrics['success_rate'].metric("✅ Success Rate", f"{success_rate:.1f}%")
+                
+                # Update output display
+                if show_all_output:
+                    display_lines = output_lines
+                else:
+                    # Show last 25 lines for better readability
+                    display_lines = output_lines[-25:] if len(output_lines) > 25 else output_lines
+                
+                # Format output with color coding
+                formatted_output = []
+                for output_line in display_lines:
+                    if "✓" in output_line:
+                        formatted_output.append(f"✅ {output_line}")
+                    elif "✗" in output_line or "Error" in output_line:
+                        formatted_output.append(f"❌ {output_line}")
+                    elif "Processing batch" in output_line:
+                        formatted_output.append(f"🔄 {output_line}")
+                    elif "Found" in output_line and "transactions" in output_line:
+                        formatted_output.append(f"📊 {output_line}")
+                    else:
+                        formatted_output.append(f"   {output_line}")
+                
                 output_text.text_area(
-                    "Real-time Output",
-                    value="\n".join(recent_output),
-                    height=300,
+                    "Console Output",
+                    value="\n".join(formatted_output),
+                    height=400,
                     key=f"output_{len(output_lines)}"
                 )
                 
-                # Small delay to make updates visible
-                time.sleep(0.1)
+                # Small delay to prevent UI freezing
+                time.sleep(0.05)
         
         except Exception as e:
-            st.error(f"Error during analysis: {str(e)}")
+            st.error(f"❌ Error during analysis: {str(e)}")
+            output_lines.append(f"[ERROR] {str(e)}")
         
         finally:
-            # Reset the run analysis flag
-            st.session_state.run_analysis = False
+            # Final status update
+            elapsed_total = time.time() - start_time
             
-            # Show completion message
-            if current_step >= 6:
-                st.success("🎉 Analysis completed successfully! Data has been updated in Supabase.")
+            if current_progress >= 100:
+                st.success(f"🎉 Analysis completed successfully in {elapsed_total:.1f} seconds!")
                 st.balloons()
+                
+                # Show completion summary
+                with st.expander("📈 Analysis Summary"):
+                    total_lines = len(output_lines)
+                    success_operations = len([l for l in output_lines if "✓" in l])
+                    error_operations = len([l for l in output_lines if ("✗" in l or "Error" in l)])
+                    
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Total Operations", total_lines)
+                    col2.metric("Successful", success_operations)
+                    col3.metric("Errors", error_operations)
+                
+            elif st.session_state.get('analysis_stopped', False):
+                st.warning(f"⚠️ Analysis stopped after {elapsed_total:.1f} seconds")
             else:
-                st.warning("⚠️ Analysis may not have completed successfully. Check the output above.")
+                st.error(f"❌ Analysis may not have completed successfully after {elapsed_total:.1f} seconds")
+            
+            # Reset flags
+            st.session_state.run_analysis = False
+            st.session_state.analysis_stopped = False
+            
+            # Option to download log
+            if output_lines:
+                log_content = "\n".join(output_lines)
+                st.download_button(
+                    label="📥 Download Analysis Log",
+                    data=log_content,
+                    file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain"
+                )
 
 def dashboard_tab():
     """

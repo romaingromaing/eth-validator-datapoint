@@ -6,6 +6,8 @@ import time
 import os
 from dune_client.client import DuneClient
 from supabase import create_client, Client
+import psycopg2
+from urllib.parse import urlparse
 
 # Configuration - Modularized API keys using environment variables
 class Config:
@@ -46,12 +48,19 @@ class Config:
         # Supabase configuration
         self.supabase_url = get_config_value('SUPABASE_URL')
         self.supabase_key = get_config_value('SUPABASE_KEY')
+        self.database_url = get_config_value('SUPABASE_DATABASE_URL')
         self.table_name = get_config_value('SUPABASE_TABLE_NAME', 'validator_data')
+        
+        # CSV upload configuration
+        self.connection_timeout = 30
+        self.clear_existing_data = True
+        self.encoding = 'utf-8'
+        self.csv_delimiter = ','
         
         # Other configuration
         self.batch_size = int(get_config_value('BATCH_SIZE', 100))
         self.delay_seconds = int(get_config_value('DELAY_SECONDS', 6))
-        self.api_delay = float(get_config_value('API_DELAY', 0.2))
+        self.api_delay = float(get_config_value('API_DELAY', 0.25))
         
         # Validate required environment variables
         self._validate_config()
@@ -62,7 +71,8 @@ class Config:
             ('DUNE_SIM_API_KEY', self.dune_sim_api_key),
             ('DUNE_CLIENT_API_KEY', self.dune_client_api_key),
             ('SUPABASE_URL', self.supabase_url),
-            ('SUPABASE_KEY', self.supabase_key)
+            ('SUPABASE_KEY', self.supabase_key),
+            ('SUPABASE_DATABASE_URL', self.database_url)
         ]
         
         missing_vars = []
@@ -80,11 +90,76 @@ class Config:
         
         print("✓ All required environment variables loaded successfully")
 
+def upload_csv_to_supabase(csv_file_path, config):
+    """
+    Upload CSV file directly to Supabase table using PostgreSQL COPY command
+    
+    Args:
+        csv_file_path (str): Path to CSV file
+        config (Config): Configuration object with Supabase database URL
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Parse the Supabase database connection string
+        # Get this from: Supabase Dashboard > Settings > Database > Connection String
+        url = urlparse(config.database_url)
+        
+        # Connect directly to PostgreSQL with production settings
+        conn = psycopg2.connect(
+            host=url.hostname,
+            port=url.port or 5432,
+            user=url.username,
+            password=url.password,
+            database=url.path[1:],  # Remove leading '/'
+            connect_timeout=getattr(config, 'connection_timeout', 30),
+            sslmode='require'  # Required for Supabase connections
+        )
+        
+        cur = conn.cursor()
+        
+        # Clear existing data (configurable)
+        if getattr(config, 'clear_existing_data', True):
+            print(f"Clearing existing data from {config.table_name}...")
+            cur.execute(f"DELETE FROM {config.table_name}")
+        
+        # Use COPY command to upload CSV directly
+        print(f"Uploading CSV file: {csv_file_path}")
+        encoding = getattr(config, 'encoding', 'utf-8')
+        delimiter = getattr(config, 'csv_delimiter', ',')
+        
+        with open(csv_file_path, 'r', encoding=encoding) as f:
+            cur.copy_expert(
+                f"COPY {config.table_name} FROM STDIN WITH (FORMAT CSV, HEADER true, DELIMITER '{delimiter}')",
+                f
+            )
+        
+        # Commit the transaction
+        conn.commit()
+        
+        # Get row count for confirmation
+        cur.execute(f"SELECT COUNT(*) FROM {config.table_name}")
+        row_count = cur.fetchone()[0]
+        
+        cur.close()
+        conn.close()
+        
+        print(f"✓ Successfully uploaded CSV to table '{config.table_name}' - {row_count} records")
+        return True
+        
+    except Exception as e:
+        print(f"✗ Error uploading CSV: {e}")
+        if 'conn' in locals():
+            conn.rollback()
+            conn.close()
+        return False
+
 # Initialize configuration
 config = Config()
 
 input_file = '0x00-validators.json'
-output_file = 'dune.csv'  # Changed to CSV format
+output_file = 'last_datapoint.csv'  # Changed to CSV format
 
 with open(input_file, 'r') as f:
     validators = json.load(f)
@@ -319,55 +394,8 @@ df_with_transaction_data.to_csv(output_file, index=False)
 
 print(f"Saved to {output_file}")
 
-# Save to Supabase
-def save_to_supabase(df, config):
-    """
-    Save DataFrame to Supabase table (overwrites existing data)
-    
-    Args:
-        df (pd.DataFrame): DataFrame to save
-        config (Config): Configuration object with Supabase credentials
-    
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    try:
-        # Initialize Supabase client
-        supabase: Client = create_client(config.supabase_url, config.supabase_key)
-        
-        # Convert DataFrame to list of dictionaries
-        # Handle NaN values by replacing them with None
-        data = df.to_dict('records')
-        
-        print(f"Preparing to overwrite table '{config.table_name}' with {len(data)} records...")
-        
-        # Clear existing data (overwrite mode)
-        print("Clearing existing data...")
-        delete_response = supabase.table(config.table_name).delete().neq('id', 0).execute()
-        print(f"✓ Cleared existing data from {config.table_name}")
-        
-        # Insert new data in batches (Supabase has limits on batch size)
-        batch_size = 1000
-        total_batches = (len(data) + batch_size - 1) // batch_size
-        
-        print(f"Inserting {len(data)} records in {total_batches} batches...")
-        
-        for i in range(0, len(data), batch_size):
-            batch = data[i:i + batch_size]
-            batch_number = i // batch_size + 1
-            
-            response = supabase.table(config.table_name).insert(batch).execute()
-            print(f"✓ Inserted batch {batch_number}/{total_batches}: {len(batch)} records")
-        
-        print(f"✓ Successfully overwritten Supabase table '{config.table_name}' with {len(data)} records")
-        return True
-        
-    except Exception as e:
-        print(f"✗ Error saving to Supabase: {e}")
-        return False
-
-# Save to Supabase
-save_success = save_to_supabase(df_with_transaction_data, config)
+# Save to Supabase using direct CSV upload
+save_success = upload_csv_to_supabase(output_file, config)
 if save_success:
     print("Data successfully saved to Supabase!")
 else:
