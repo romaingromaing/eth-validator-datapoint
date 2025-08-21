@@ -93,17 +93,10 @@ class Config:
 def upload_csv_to_supabase(csv_file_path, config):
     """
     Upload CSV file directly to Supabase table using PostgreSQL COPY command
-    
-    Args:
-        csv_file_path (str): Path to CSV file
-        config (Config): Configuration object with Supabase database URL
-    
-    Returns:
-        bool: True if successful, False otherwise
+    Explicitly specifies column names to handle auto-generated columns (id, created_at)
     """
     try:
         # Parse the Supabase database connection string
-        # Get this from: Supabase Dashboard > Settings > Database > Connection String
         url = urlparse(config.database_url)
         
         # Connect directly to PostgreSQL with production settings
@@ -123,33 +116,89 @@ def upload_csv_to_supabase(csv_file_path, config):
         if getattr(config, 'clear_existing_data', True):
             print(f"Clearing existing data from {config.table_name}...")
             cur.execute(f"DELETE FROM {config.table_name}")
+            deleted_count = cur.rowcount
+            print(f"Deleted {deleted_count} existing records")
         
-        # Use COPY command to upload CSV directly
+        # Read CSV headers to verify column structure
+        import pandas as pd
+        df_sample = pd.read_csv(csv_file_path, nrows=0)  # Just get headers
+        csv_columns = list(df_sample.columns)
+        print(f"CSV columns ({len(csv_columns)}): {csv_columns}")
+        
+        # Define the expected CSV columns (excluding auto-generated database columns)
+        expected_csv_columns = [
+            'index', 
+            'pubkey', 
+            'state', 
+            'withdrawal_credentials', 
+            'deposit_address', 
+            'last_transaction_time', 
+            'is_smart_contract', 
+            'is_dex'
+        ]
+        
+        # Verify CSV has expected columns
+        missing_cols = [col for col in expected_csv_columns if col not in csv_columns]
+        extra_cols = [col for col in csv_columns if col not in expected_csv_columns]
+        
+        if missing_cols:
+            print(f"Warning: Missing expected columns: {missing_cols}")
+        if extra_cols:
+            print(f"Info: Extra columns in CSV (will be ignored): {extra_cols}")
+        
+        # Use explicit column names in COPY command (only the non-auto-generated ones)
+        # This tells PostgreSQL exactly which columns we're providing data for
+        columns_str = ', '.join(expected_csv_columns)
+        
+        copy_sql = f"""
+            COPY {config.table_name} ({columns_str}) 
+            FROM STDIN WITH (FORMAT CSV, HEADER true, DELIMITER '{getattr(config, 'csv_delimiter', ',')}')
+        """
+        
+        print(f"Using COPY command with explicit columns:")
+        print(f"COPY {config.table_name} ({columns_str}) FROM STDIN...")
         print(f"Uploading CSV file: {csv_file_path}")
-        encoding = getattr(config, 'encoding', 'utf-8')
-        delimiter = getattr(config, 'csv_delimiter', ',')
         
-        with open(csv_file_path, 'r', encoding=encoding) as f:
-            cur.copy_expert(
-                f"COPY {config.table_name} FROM STDIN WITH (FORMAT CSV, HEADER true, DELIMITER '{delimiter}')",
-                f
-            )
+        # Execute the COPY command
+        with open(csv_file_path, 'r', encoding=getattr(config, 'encoding', 'utf-8')) as f:
+            cur.copy_expert(copy_sql, f)
         
         # Commit the transaction
         conn.commit()
+        print("Transaction committed successfully")
         
         # Get row count for confirmation
         cur.execute(f"SELECT COUNT(*) FROM {config.table_name}")
         row_count = cur.fetchone()[0]
         
+        # Get a sample of uploaded data to verify
+        cur.execute(f"SELECT id, index, pubkey, deposit_address FROM {config.table_name} LIMIT 3")
+        sample_rows = cur.fetchall()
+        
+        print(f"\nSample uploaded data:")
+        for row in sample_rows:
+            print(f"  id: {row[0]}, index: {row[1]}, pubkey: {row[2][:20]}..., address: {row[3][:20]}...")
+        
         cur.close()
         conn.close()
         
-        print(f"✓ Successfully uploaded CSV to table '{config.table_name}' - {row_count} records")
+        print(f"\n✓ Successfully uploaded CSV to table '{config.table_name}' - {row_count} records")
+        print(f"✓ Auto-generated 'id' and 'created_at' columns handled automatically by database")
         return True
         
+    except psycopg2.Error as e:
+        print(f"✗ PostgreSQL Error: {e}")
+        print(f"✗ Error code: {e.pgcode}")
+        if hasattr(e, 'pgerror'):
+            print(f"✗ Detailed error: {e.pgerror}")
+        if 'conn' in locals():
+            conn.rollback()
+            conn.close()
+        return False
+        
     except Exception as e:
-        print(f"✗ Error uploading CSV: {e}")
+        print(f"✗ Unexpected error uploading CSV: {e}")
+        print(f"✗ Error type: {type(e).__name__}")
         if 'conn' in locals():
             conn.rollback()
             conn.close()
@@ -389,8 +438,60 @@ unique_results['is_dex'] = unique_results['deposit_address'].isin(dex_addresses[
 # Step 4: Merge back to original DataFrame
 df_with_transaction_data = df.merge(unique_results, on='deposit_address', how='left')
 
-# Save to CSV with semicolon separator as requested
-df_with_transaction_data.to_csv(output_file, index=False)
+# Ensure columns match the database schema exactly (excluding auto-generated columns)
+# The 'id' and 'created_at' columns are auto-generated, so we exclude them from CSV
+csv_columns = [
+    'index', 
+    'pubkey', 
+    'state', 
+    'withdrawal_credentials', 
+    'deposit_address', 
+    'last_transaction_time', 
+    'is_smart_contract', 
+    'is_dex'
+]
+
+# Check if all required columns exist in the DataFrame
+missing_columns = [col for col in csv_columns if col not in df_with_transaction_data.columns]
+if missing_columns:
+    print(f"Warning: Missing columns in DataFrame: {missing_columns}")
+    print(f"Available columns: {list(df_with_transaction_data.columns)}")
+
+# Reorder DataFrame columns to match database schema (excluding auto-generated columns)
+df_ordered = df_with_transaction_data[csv_columns]
+
+# Handle any data type issues before saving
+print("Checking data types...")
+print("DataFrame dtypes:")
+for col in df_ordered.columns:
+    print(f"  {col}: {df_ordered[col].dtype}")
+
+# Ensure index column is integer (handle any conversion issues)
+if 'index' in df_ordered.columns:
+    # Convert index to integer, replacing any non-numeric values with None
+    df_ordered['index'] = pd.to_numeric(df_ordered['index'], errors='coerce').astype('Int64')
+    
+    # Check for any failed conversions
+    null_indices = df_ordered['index'].isna().sum()
+    if null_indices > 0:
+        print(f"Warning: {null_indices} rows have invalid index values (converted to null)")
+
+# Convert boolean columns to proper boolean type
+bool_columns = ['is_smart_contract', 'is_dex']
+for col in bool_columns:
+    if col in df_ordered.columns:
+        df_ordered[col] = df_ordered[col].astype(bool)
+
+# Save to CSV with correct column order
+df_ordered.to_csv(output_file, index=False)
+print(f"Saved to {output_file} with columns: {list(df_ordered.columns)}")
+
+# Verify the first few rows to ensure data alignment
+print("\nFirst 3 rows of CSV data:")
+print(df_ordered.head(3))
+
+print(f"\nTotal rows in CSV: {len(df_ordered)}")
+
 
 print(f"Saved to {output_file}")
 
