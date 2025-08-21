@@ -50,8 +50,8 @@ class Config:
         
         # Other configuration
         self.batch_size = int(get_config_value('BATCH_SIZE', 100))
-        self.delay_seconds = int(get_config_value('DELAY_SECONDS', 15))
-        self.api_delay = float(get_config_value('API_DELAY', 0.25))
+        self.delay_seconds = int(get_config_value('DELAY_SECONDS', 6))
+        self.api_delay = float(get_config_value('API_DELAY', 0.2))
         
         # Validate required environment variables
         self._validate_config()
@@ -114,14 +114,24 @@ def get_deposit_addresses(pubkeys_batch):
 pubkey_to_validator = {val['pubkey'].lower(): val for val in validators if 'pubkey' in val}
 all_pubkeys = list(pubkey_to_validator.keys())
 
+# Calculate total batches upfront
+total_batches = (len(all_pubkeys) + config.batch_size - 1) // config.batch_size
+print(f"Starting processing of {len(all_pubkeys):,} pubkeys in {total_batches} batches")
+print(f"Estimated completion time: {(total_batches * config.delay_seconds) / 3600:.1f} hours")
+
 for i in range(0, len(all_pubkeys), config.batch_size):
     batch = all_pubkeys[i:i + config.batch_size]
-    print(f"Processing batch {i//config.batch_size + 1}: {len(batch)} pubkeys")
+    current_batch = i // config.batch_size + 1
+    
+    print(f"Processing batch {current_batch}/{total_batches} ({current_batch/total_batches*100:.1f}%): {len(batch)} pubkeys")
+    
     deposit_map = get_deposit_addresses(batch)
     for pubkey, address in deposit_map.items():
         if pubkey in pubkey_to_validator:
             pubkey_to_validator[pubkey]['deposit_address'] = address
-    time.sleep(config.delay_seconds)
+    
+    if current_batch < total_batches:  # Don't sleep after the last batch
+        time.sleep(config.delay_seconds)
 
 enriched_validators = list(pubkey_to_validator.values())
 for validator in enriched_validators:
