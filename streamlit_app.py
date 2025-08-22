@@ -166,12 +166,15 @@ def run_validator_analysis():
         return_code = process.wait()
         
         if return_code != 0:
-            yield f"❌ Process finished with error code: {return_code}"
+            yield f"Process finished with error code: {return_code}"
+            return False
         else:
-            yield "✅ Validator analysis completed successfully!"
+            yield "Validator analysis completed successfully!"
+            return True
             
     except Exception as e:
-        yield f"❌ Error running validator analysis: {str(e)}"
+        yield f"Error running validator analysis: {str(e)}"
+        return False
 
 def parse_progress_from_output(line):
     """
@@ -219,11 +222,24 @@ def parse_progress_from_output(line):
     
     return None, None, None
 
+def reset_analysis_state():
+    """Reset all analysis-related session state variables"""
+    keys_to_reset = [
+        'run_analysis', 
+        'analysis_stopped', 
+        'analysis_running', 
+        'analysis_completed',
+        'analysis_failed'
+    ]
+    for key in keys_to_reset:
+        if key in st.session_state:
+            del st.session_state[key]
+
 def analysis_tab():
     """
-    Enhanced tab for running the validator analysis with real-time progress
+    Enhanced tab for running the validator analysis with proper state management
     """
-    st.header("🚀 Run Validator Analysis")
+    st.header("Run Validator Analysis")
     
     st.markdown("""
     This will run the complete validator analysis pipeline:
@@ -251,7 +267,7 @@ def analysis_tab():
     if not all_vars_present:
         st.error(f"Missing environment variables: {', '.join(missing_vars)}")
         
-        with st.expander("📋 Environment Variables Setup Guide"):
+        with st.expander("Environment Variables Setup Guide"):
             st.markdown("""
             **Required Environment Variables:**
             
@@ -278,7 +294,7 @@ def analysis_tab():
         return
     
     # Show current configuration
-    with st.expander("⚙️ Current Configuration"):
+    with st.expander("Current Configuration"):
         config_info = {
             "Table Name": os.getenv('SUPABASE_TABLE_NAME', 'validator_data'),
             "Batch Size": os.getenv('BATCH_SIZE', '100'),
@@ -289,32 +305,62 @@ def analysis_tab():
         for key, value in config_info.items():
             st.text(f"{key}: {value}")
     
-    st.success("✅ All requirements met. Ready to run analysis!")
+    st.success("All requirements met. Ready to run analysis!")
+    
+    # Initialize session state variables if they don't exist
+    if 'analysis_running' not in st.session_state:
+        st.session_state.analysis_running = False
+    if 'analysis_completed' not in st.session_state:
+        st.session_state.analysis_completed = False
+    if 'analysis_failed' not in st.session_state:
+        st.session_state.analysis_failed = False
+    if 'analysis_output' not in st.session_state:
+        st.session_state.analysis_output = []
     
     # Control buttons
     col1, col2, col3 = st.columns([2, 2, 2])
     
+    # Determine button states based on current analysis status
+    analysis_in_progress = st.session_state.analysis_running
+    can_start = not analysis_in_progress
+    can_stop = analysis_in_progress
+    
     with col1:
-        if st.button("🚀 Start Analysis", type="primary", use_container_width=True):
-            st.session_state.run_analysis = True
-            st.session_state.analysis_stopped = False
-    
-    with col2:
-        if st.button("⏹️ Stop Analysis", use_container_width=True):
-            st.session_state.analysis_stopped = True
-            st.session_state.run_analysis = False
-    
-    with col3:
-        if st.button("🔄 Refresh Dashboard", use_container_width=True):
-            st.cache_data.clear()
+        if st.button("Start Analysis", type="primary", use_container_width=True, disabled=not can_start):
+            # Reset all state and start fresh
+            reset_analysis_state()
+            st.session_state.analysis_running = True
+            st.session_state.analysis_output = []
             st.rerun()
     
-    # Run analysis if button was clicked
-    if st.session_state.get('run_analysis', False) and not st.session_state.get('analysis_stopped', False):
+    with col2:
+        if st.button("Stop Analysis", use_container_width=True, disabled=not can_stop):
+            st.session_state.analysis_running = False
+            st.session_state.analysis_stopped = True
+            st.rerun()
+    
+    with col3:
+        if st.button("Reset & Clear", use_container_width=True):
+            reset_analysis_state()
+            st.session_state.analysis_output = []
+            st.cache_data.clear()
+            st.success("Reset complete!")
+            st.rerun()
+    
+    # Show current status
+    if st.session_state.analysis_running:
+        st.info("Analysis is currently running...")
+    elif st.session_state.analysis_completed:
+        st.success("Analysis completed successfully!")
+    elif st.session_state.analysis_failed:
+        st.error("Analysis failed. Check the output below for details.")
+    
+    # Run analysis if flagged and not already running
+    if st.session_state.analysis_running and not st.session_state.get('analysis_completed', False):
         st.markdown("---")
-        st.subheader("📊 Analysis Progress")
+        st.subheader("Analysis Progress")
         
-        # Create enhanced progress tracking containers
+        # Create progress tracking containers
         progress_container = st.container()
         metrics_container = st.container()
         output_container = st.container()
@@ -342,9 +388,9 @@ def analysis_tab():
             # Output display options
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.subheader("📝 Real-time Output")
+                st.subheader("Real-time Output")
             with col2:
-                show_all_output = st.checkbox("Show all output", value=True)  # Default to True
+                show_all_output = st.checkbox("Show all output", value=True)
             
             output_text = st.empty()
         
@@ -353,23 +399,21 @@ def analysis_tab():
         start_time = time.time()
         current_progress = 0
         current_step = "Starting..."
-        
-        # Store output in session state to persist after completion
-        if 'analysis_output' not in st.session_state:
-            st.session_state.analysis_output = []
-        
-        # Clear previous output when starting new analysis
-        st.session_state.analysis_output = []
+        analysis_success = False
         
         try:
-            for line in run_validator_analysis():
+            analysis_generator = run_validator_analysis()
+            
+            for line in analysis_generator:
+                # Check if user requested stop
                 if st.session_state.get('analysis_stopped', False):
-                    st.warning("⚠️ Analysis stopped by user")
+                    st.warning("Analysis stopped by user")
                     break
                 
-                output_lines.append(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
-                # Also store in session state for persistence
-                st.session_state.analysis_output.append(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
+                timestamp = datetime.now().strftime('%H:%M:%S')
+                formatted_line = f"[{timestamp}] {line}"
+                output_lines.append(formatted_line)
+                st.session_state.analysis_output.append(formatted_line)
                 
                 # Parse progress from output
                 step_name, progress, description = parse_progress_from_output(line)
@@ -379,27 +423,27 @@ def analysis_tab():
                 
                 # Update progress indicators
                 progress_bar.progress(min(current_progress / 100, 1.0))
-                status_text.text(f"🔄 {current_step} ({current_progress:.0f}%)")
+                status_text.text(f"{current_step} ({current_progress:.0f}%)")
                 
                 # Update step indicators
                 steps = ["Environment", "Data Loading", "API Calls", "Upload"]
                 for i, indicator in enumerate(step_indicators):
                     if current_progress > (i + 1) * 25:
-                        indicator.success(f"✅ {steps[i]}")
+                        indicator.success(f"✓ {steps[i]}")
                     elif current_progress > i * 25:
-                        indicator.info(f"🔄 {steps[i]}")
+                        indicator.info(f"• {steps[i]}")
                     else:
                         indicator.empty()
                 
                 # Update metrics
                 elapsed = time.time() - start_time
-                metrics['elapsed_time'].metric("⏱️ Elapsed", f"{elapsed:.0f}s")
+                metrics['elapsed_time'].metric("Elapsed", f"{elapsed:.0f}s")
                 
                 # Estimate completion time based on progress
                 if current_progress > 5:
                     estimated_total = elapsed * (100 / current_progress)
                     eta = max(0, estimated_total - elapsed)
-                    metrics['eta'].metric("⏳ ETA", f"{eta:.0f}s")
+                    metrics['eta'].metric("ETA", f"{eta:.0f}s")
                 
                 # Count successful operations
                 success_count = len([l for l in output_lines if "✓" in l])
@@ -407,32 +451,28 @@ def analysis_tab():
                 
                 if success_count + error_count > 0:
                     success_rate = (success_count / (success_count + error_count)) * 100
-                    metrics['success_rate'].metric("✅ Success Rate", f"{success_rate:.1f}%")
+                    metrics['success_rate'].metric("Success Rate", f"{success_rate:.1f}%")
                 
-                # Update output display using st.code to preserve scroll and readability
-                show_all_output = st.session_state.get('show_all_output', True)
-                
+                # Update output display
                 if show_all_output:
                     display_lines = output_lines
                 else:
-                    # Show last 25 lines for better readability
                     display_lines = output_lines[-25:] if len(output_lines) > 25 else output_lines
                 
-                # Format output with simple text formatting
+                # Format output with status indicators
                 formatted_output = []
                 for output_line in display_lines:
-                    if "✓" in output_line:
+                    if "✓" in output_line or "completed successfully" in output_line.lower():
                         formatted_output.append(f"✅ {output_line}")
-                    elif "✗" in output_line or "Error" in output_line:
+                    elif "✗" in output_line or "error" in output_line.lower():
                         formatted_output.append(f"❌ {output_line}")
-                    elif "Processing batch" in output_line:
+                    elif "processing batch" in output_line.lower():
                         formatted_output.append(f"🔄 {output_line}")
-                    elif "Found" in output_line and "transactions" in output_line:
+                    elif "found" in output_line.lower() and "transactions" in output_line.lower():
                         formatted_output.append(f"📊 {output_line}")
                     else:
                         formatted_output.append(f"   {output_line}")
                 
-                # Use st.code with a unique key to minimize re-rendering
                 with output_text.container():
                     st.code(
                         "\n".join(formatted_output),
@@ -442,23 +482,33 @@ def analysis_tab():
                 
                 # Small delay to prevent UI freezing
                 time.sleep(0.05)
+                
+                # Check if analysis completed successfully
+                if "completed successfully" in line.lower():
+                    analysis_success = True
         
         except Exception as e:
-            st.error(f"❌ Error during analysis: {str(e)}")
+            st.error(f"Error during analysis: {str(e)}")
             error_msg = f"[ERROR] {str(e)}"
             output_lines.append(error_msg)
             st.session_state.analysis_output.append(error_msg)
+            analysis_success = False
         
         finally:
-            # Final status update
+            # Final status update and state cleanup
             elapsed_total = time.time() - start_time
             
-            if current_progress >= 100:
-                st.success(f"🎉 Analysis completed successfully in {elapsed_total:.1f} seconds!")
+            # Update session state based on results
+            st.session_state.analysis_running = False
+            
+            if analysis_success and current_progress >= 95:
+                st.session_state.analysis_completed = True
+                st.session_state.analysis_failed = False
+                st.success(f"Analysis completed successfully in {elapsed_total:.1f} seconds!")
                 st.balloons()
                 
                 # Show completion summary
-                with st.expander("📈 Analysis Summary"):
+                with st.expander("Analysis Summary"):
                     total_lines = len(output_lines)
                     success_operations = len([l for l in output_lines if "✓" in l])
                     error_operations = len([l for l in output_lines if ("✗" in l or "Error" in l)])
@@ -469,101 +519,72 @@ def analysis_tab():
                     col3.metric("Errors", error_operations)
                 
             elif st.session_state.get('analysis_stopped', False):
-                st.warning(f"⚠️ Analysis stopped after {elapsed_total:.1f} seconds")
+                st.session_state.analysis_completed = False
+                st.session_state.analysis_failed = True
+                st.warning(f"Analysis stopped after {elapsed_total:.1f} seconds")
             else:
-                st.error(f"❌ Analysis may not have completed successfully after {elapsed_total:.1f} seconds")
+                st.session_state.analysis_completed = False
+                st.session_state.analysis_failed = True
+                st.error(f"Analysis failed or incomplete after {elapsed_total:.1f} seconds")
             
-            # Reset flags
-            st.session_state.run_analysis = False
-            st.session_state.analysis_stopped = False
-            
-            # Show final output after completion (persisted)
-            if st.session_state.analysis_output:
-                st.subheader("📝 Final Analysis Output")
-                show_all_final = st.session_state.get('show_all_output', True)
-                
-                if show_all_final:
-                    final_display_lines = st.session_state.analysis_output
-                else:
-                    final_display_lines = st.session_state.analysis_output[-25:] if len(st.session_state.analysis_output) > 25 else st.session_state.analysis_output
-                
-                # Format final output
-                final_formatted_output = []
-                for output_line in final_display_lines:
-                    if "✓" in output_line:
-                        final_formatted_output.append(f"✅ {output_line}")
-                    elif "✗" in output_line or "Error" in output_line:
-                        final_formatted_output.append(f"❌ {output_line}")
-                    elif "Processing batch" in output_line:
-                        final_formatted_output.append(f"🔄 {output_line}")
-                    elif "Found" in output_line and "transactions" in output_line:
-                        final_formatted_output.append(f"📊 {output_line}")
-                    else:
-                        final_formatted_output.append(f"   {output_line}")
-                
-                st.code(
-                    "\n".join(final_formatted_output),
-                    language=None,
-                    line_numbers=False
-                )
-            
-            # Option to download log
-            if st.session_state.analysis_output:
-                log_content = "\n".join(st.session_state.analysis_output)
-                st.download_button(
-                    label="📥 Download Analysis Log",
-                    data=log_content,
-                    file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain"
-                )
+            # Clear the stopped flag
+            if 'analysis_stopped' in st.session_state:
+                del st.session_state['analysis_stopped']
     
-    # Show previous analysis output if available (outside the analysis block)
-    elif st.session_state.get('analysis_output'):
+    # Show previous analysis output if available and not currently running
+    elif st.session_state.analysis_output and not st.session_state.analysis_running:
         st.markdown("---")
-        st.subheader("📝 Previous Analysis Output")
-        st.info("Previous analysis results are shown below. Click 'Start Analysis' to run a new analysis.")
+        st.subheader("Analysis Output")
         
-        show_all_previous = st.checkbox("Show all previous output", value=True, key="previous_output_checkbox")
+        if st.session_state.analysis_completed:
+            st.info("Analysis completed successfully. Output shown below.")
+        elif st.session_state.analysis_failed:
+            st.warning("Analysis failed or was incomplete. Output shown below.")
+        else:
+            st.info("Previous analysis results shown below.")
+        
+        show_all_previous = st.checkbox("Show all output", value=True, key="previous_output_checkbox")
         
         if show_all_previous:
-            previous_display_lines = st.session_state.analysis_output
+            display_lines = st.session_state.analysis_output
         else:
-            previous_display_lines = st.session_state.analysis_output[-25:] if len(st.session_state.analysis_output) > 25 else st.session_state.analysis_output
+            display_lines = st.session_state.analysis_output[-25:] if len(st.session_state.analysis_output) > 25 else st.session_state.analysis_output
         
-        # Format previous output
-        previous_formatted_output = []
-        for output_line in previous_display_lines:
-            if "✓" in output_line:
-                previous_formatted_output.append(f"✅ {output_line}")
-            elif "✗" in output_line or "Error" in output_line:
-                previous_formatted_output.append(f"❌ {output_line}")
-            elif "Processing batch" in output_line:
-                previous_formatted_output.append(f"🔄 {output_line}")
-            elif "Found" in output_line and "transactions" in output_line:
-                previous_formatted_output.append(f"📊 {output_line}")
+        # Format output
+        formatted_output = []
+        for output_line in display_lines:
+            if "✓" in output_line or "completed successfully" in output_line.lower():
+                formatted_output.append(f"✅ {output_line}")
+            elif "✗" in output_line or "error" in output_line.lower():
+                formatted_output.append(f"❌ {output_line}")
+            elif "processing batch" in output_line.lower():
+                formatted_output.append(f"🔄 {output_line}")
+            elif "found" in output_line.lower() and "transactions" in output_line.lower():
+                formatted_output.append(f"📊 {output_line}")
             else:
-                previous_formatted_output.append(f"   {output_line}")
+                formatted_output.append(f"   {output_line}")
         
         st.code(
-            "\n".join(previous_formatted_output),
+            "\n".join(formatted_output),
             language=None,
             line_numbers=False
         )
         
-        # Option to download previous log
-        log_content = "\n".join(st.session_state.analysis_output)
-        st.download_button(
-            label="📥 Download Previous Analysis Log",
-            data=log_content,
-            file_name=f"previous_analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain"
-        )
+        # Option to download log
+        if st.session_state.analysis_output:
+            log_content = "\n".join(st.session_state.analysis_output)
+            st.download_button(
+                label="Download Analysis Log",
+                data=log_content,
+                file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain"
+            )
 
 def dashboard_tab():
     """
     Original dashboard functionality
     """
-    st.header("🔍 Validator Analysis Dashboard")
+    st.header("Validator Analysis Dashboard")
     
     # Load data
     with st.spinner("Loading data from Supabase..."):
