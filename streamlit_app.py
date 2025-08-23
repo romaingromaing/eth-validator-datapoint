@@ -59,6 +59,7 @@ class Config:
             st.stop()
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def load_data_from_supabase():
     """
     Load validator data from Supabase
@@ -72,9 +73,12 @@ def load_data_from_supabase():
         # Initialize Supabase client
         supabase: Client = create_client(config.supabase_url, config.supabase_key)
         
-        # Fetch data from Supabase
-        response = supabase.table(config.table_name).select("*").execute()
+        # Get total count first
+        count_response = supabase.table(config.table_name).select("*", count="exact").execute()
+        total_count = count_response.count
         
+        # Then fetch all records
+        response = supabase.table(config.table_name).select("*").limit(total_count).execute()
         metadata = {
             'table_name': config.table_name,
             'record_count': len(response.data) if response.data else 0,
