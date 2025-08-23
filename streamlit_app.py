@@ -125,122 +125,69 @@ def check_environment_variables():
     
     return len(missing_vars) == 0, missing_vars
 
-def output_reader_thread(process, output_queue, stop_event):
+def start_analysis_subprocess():
     """
-    Thread function to continuously read process output
-    This runs in background and feeds output to the queue
-    """
-    try:
-        while not stop_event.is_set() and process.poll() is None:
-            line = process.stdout.readline()
-            if line:
-                timestamp = datetime.now().strftime('%H:%M:%S')
-                formatted_line = f"[{timestamp}] {line.strip()}"
-                output_queue.put(formatted_line)
-            else:
-                time.sleep(0.1)  # Small delay if no output
-        
-        # Process finished - read any remaining output
-        while True:
-            line = process.stdout.readline()
-            if not line:
-                break
-            timestamp = datetime.now().strftime('%H:%M:%S')
-            formatted_line = f"[{timestamp}] {line.strip()}"
-            output_queue.put(formatted_line)
-        
-        # Signal completion
-        exit_code = process.poll()
-        if exit_code == 0:
-            output_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] Process completed successfully!")
-        else:
-            output_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] Process failed with exit code: {exit_code}")
-            
-    except Exception as e:
-        output_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] Output reader error: {str(e)}")
-
-def start_analysis_with_threading():
-    """
-    Start the validator analysis with proper threading for real-time output
-    Returns (process, output_queue, stop_event, reader_thread)
+    Start the validator analysis as a background subprocess
+    Returns the process object
     """
     try:
-        # Start the subprocess
         process = subprocess.Popen(
             [sys.executable, "-u", "validator_analysis.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
-            bufsize=1,  # Line buffered
+            bufsize=0,  # Unbuffered for real-time output
             env=os.environ.copy(),
             cwd=os.getcwd()
         )
-        
-        # Create queue and stop event for thread communication
-        output_queue = queue.Queue()
-        stop_event = threading.Event()
-        
-        # Start the output reader thread
-        reader_thread = threading.Thread(
-            target=output_reader_thread,
-            args=(process, output_queue, stop_event),
-            daemon=True
-        )
-        reader_thread.start()
-        
-        return process, output_queue, stop_event, reader_thread
-        
+        return process
     except Exception as e:
         st.error(f"Failed to start analysis process: {e}")
-        return None, None, None, None
+        return None
 
-def parse_progress_from_output(line):
+def read_process_output_thread(process, output_queue):
     """
-    Parse progress information from output line
-    Returns: (step_name, percentage, description)
+    Thread function to read process output and put it in a queue
     """
-    progress_patterns = {
-        "environment variables loaded": ("Environment Setup", 5, "Loading configuration..."),
-        "Starting processing": ("Data Loading", 10, "Loading validator data..."),
-        "Processing batch": ("Deposit Addresses", 30, "Fetching deposit addresses..."),
-        "Fetching and analyzing transaction data": ("Transaction Analysis", 50, "Analyzing transactions..."),
-        "ethereum-dex-addresses": ("DEX Analysis", 70, "Checking DEX addresses..."),
-        "Saved to": ("CSV Export", 85, "Saving data to CSV..."),
-        "Clearing existing data": ("Database Cleanup", 90, "Preparing database..."),
-        "Successfully uploaded CSV": ("Upload Complete", 100, "Data uploaded to Supabase!")
-    }
+    try:
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+            output_queue.put(line.strip())
+        
+        # Signal that the process has finished
+        output_queue.put("__PROCESS_FINISHED__")
+    except Exception as e:
+        output_queue.put(f"Error reading output: {e}")
+        output_queue.put("__PROCESS_FINISHED__")
+
+def get_new_output_lines(output_queue):
+    """
+    Get all available lines from the output queue without blocking
+    """
+    lines = []
+    process_finished = False
     
-    for pattern, (step, percentage, desc) in progress_patterns.items():
-        if pattern.lower() in line.lower():
-            return step, percentage, desc
+    try:
+        while True:
+            try:
+                line = output_queue.get_nowait()
+                if line == "__PROCESS_FINISHED__":
+                    process_finished = True
+                    break
+                elif line:  # Only add non-empty lines
+                    lines.append(line)
+            except queue.Empty:
+                break
+    except Exception:
+        pass
     
-    # Extract batch progress if available
-    if "Processing batch" in line and "/" in line:
-        try:
-            parts = line.split("Processing batch")[1].split("(")[0].strip()
-            current, total = parts.split("/")
-            current, total = int(current), int(total)
-            batch_progress = (current / total) * 20 + 10  # Scale to 10-30% range
-            return "Deposit Addresses", batch_progress, f"Processing batch {current}/{total}"
-        except:
-            pass
-    
-    # Extract transaction progress if available
-    if "[" in line and "]" in line and "Processing:" in line:
-        try:
-            bracket_content = line.split("[")[1].split("]")[0]
-            current, total = bracket_content.split("/")
-            current, total = int(current), int(total)
-            tx_progress = (current / total) * 20 + 50  # Scale to 50-70% range
-            return "Transaction Analysis", tx_progress, f"Analyzing transaction {current}/{total}"
-        except:
-            pass
-    
-    return None, None, None
+    return lines, process_finished
 
 def analysis_tab():
     """
-    Enhanced tab for running the validator analysis with FULL real-time output
+    Enhanced tab for running the validator analysis with real-time output
     """
     st.header("Run Validator Analysis")
     
@@ -288,57 +235,64 @@ def analysis_tab():
     # Initialize session state
     if 'analysis_process' not in st.session_state:
         st.session_state.analysis_process = None
-    if 'output_queue' not in st.session_state:
-        st.session_state.output_queue = None
-    if 'stop_event' not in st.session_state:
-        st.session_state.stop_event = None
-    if 'reader_thread' not in st.session_state:
-        st.session_state.reader_thread = None
     if 'analysis_output' not in st.session_state:
         st.session_state.analysis_output = []
     if 'analysis_status' not in st.session_state:
         st.session_state.analysis_status = "idle"  # idle, running, completed, failed
     if 'analysis_start_time' not in st.session_state:
         st.session_state.analysis_start_time = None
-    if 'current_progress' not in st.session_state:
-        st.session_state.current_progress = 0
-    if 'current_step' not in st.session_state:
-        st.session_state.current_step = "Ready"
+    if 'output_queue' not in st.session_state:
+        st.session_state.output_queue = None
+    if 'output_thread' not in st.session_state:
+        st.session_state.output_thread = None
+    
+    # Current status
+    process = st.session_state.analysis_process
+    status = st.session_state.analysis_status
     
     # Control buttons
     col1, col2, col3 = st.columns([2, 2, 2])
     
     with col1:
-        start_disabled = (st.session_state.analysis_status == "running")
+        start_disabled = (status == "running")
         if st.button("Start Analysis", type="primary", use_container_width=True, disabled=start_disabled):
             # Clean up any existing process
-            if st.session_state.stop_event:
-                st.session_state.stop_event.set()
             if st.session_state.analysis_process:
                 try:
                     st.session_state.analysis_process.terminate()
+                    st.session_state.analysis_process.wait(timeout=3)
                 except:
-                    pass
+                    try:
+                        st.session_state.analysis_process.kill()
+                    except:
+                        pass
             
-            # Start new analysis with threading
-            process, output_queue, stop_event, reader_thread = start_analysis_with_threading()
+            # Clean up existing thread
+            if st.session_state.output_thread and st.session_state.output_thread.is_alive():
+                # Thread will stop when process terminates
+                pass
             
-            if process:
-                st.session_state.analysis_process = process
-                st.session_state.output_queue = output_queue
-                st.session_state.stop_event = stop_event
-                st.session_state.reader_thread = reader_thread
-                st.session_state.analysis_output = []
-                st.session_state.analysis_status = "running"
-                st.session_state.analysis_start_time = time.time()
-                st.session_state.current_progress = 0
-                st.session_state.current_step = "Starting analysis..."
+            # Start new analysis
+            st.session_state.analysis_process = start_analysis_subprocess()
+            st.session_state.analysis_output = []
+            st.session_state.analysis_status = "running"
+            st.session_state.analysis_start_time = time.time()
+            
+            # Create output queue and thread
+            if st.session_state.analysis_process:
+                st.session_state.output_queue = queue.Queue()
+                st.session_state.output_thread = threading.Thread(
+                    target=read_process_output_thread,
+                    args=(st.session_state.analysis_process, st.session_state.output_queue),
+                    daemon=True
+                )
+                st.session_state.output_thread.start()
+            
+            st.rerun()
     
     with col2:
-        stop_disabled = (st.session_state.analysis_status != "running")
+        stop_disabled = (status != "running")
         if st.button("Stop Analysis", use_container_width=True, disabled=stop_disabled):
-            if st.session_state.stop_event:
-                st.session_state.stop_event.set()
             if st.session_state.analysis_process:
                 try:
                     st.session_state.analysis_process.terminate()
@@ -350,207 +304,150 @@ def analysis_tab():
                         pass
             
             st.session_state.analysis_status = "failed"
-            st.session_state.current_step = "Stopped by user"
+            st.session_state.analysis_process = None
+            st.rerun()
     
     with col3:
         if st.button("Reset & Clear", use_container_width=True):
-            # Clean up everything
-            if st.session_state.stop_event:
-                st.session_state.stop_event.set()
+            # Clean up process
             if st.session_state.analysis_process:
                 try:
                     st.session_state.analysis_process.terminate()
+                    st.session_state.analysis_process.wait(timeout=3)
                 except:
-                    pass
+                    try:
+                        st.session_state.analysis_process.kill()
+                    except:
+                        pass
             
             # Reset all state
-            for key in ['analysis_process', 'output_queue', 'stop_event', 'reader_thread', 
-                       'analysis_output', 'analysis_start_time', 'current_progress', 'current_step']:
-                st.session_state[key] = None if 'time' in key or 'progress' in key else ([] if 'output' in key else ("idle" if key == 'analysis_status' else None))
-            
+            st.session_state.analysis_process = None
+            st.session_state.analysis_output = []
             st.session_state.analysis_status = "idle"
-            st.session_state.current_progress = 0
-            st.session_state.current_step = "Ready"
+            st.session_state.analysis_start_time = None
+            st.session_state.output_queue = None
+            st.session_state.output_thread = None
             st.cache_data.clear()
-    
-    # Real-time processing and display
-    if st.session_state.analysis_status == "running":
-        st.info("Analysis is currently running...")
-        
-        # Create display containers
-        progress_container = st.container()
-        metrics_container = st.container() 
-        output_container = st.container()
-        
-        # Process new output from queue
-        new_output_received = False
-        if st.session_state.output_queue:
-            # Read ALL available output from queue
-            while True:
-                try:
-                    line = st.session_state.output_queue.get_nowait()
-                    st.session_state.analysis_output.append(line)
-                    new_output_received = True
-                    
-                    # Parse progress from this line
-                    step_name, progress, description = parse_progress_from_output(line)
-                    if step_name and progress:
-                        st.session_state.current_progress = progress
-                        st.session_state.current_step = description or step_name
-                    
-                    # Check for completion indicators
-                    if "completed successfully" in line.lower():
-                        st.session_state.analysis_status = "completed"
-                    elif "failed" in line.lower() and "exit code" in line.lower():
-                        st.session_state.analysis_status = "failed"
-                        
-                except queue.Empty:
-                    break  # No more output available right now
-        
-        # Check if process finished
-        if st.session_state.analysis_process and st.session_state.analysis_process.poll() is not None:
-            exit_code = st.session_state.analysis_process.poll()
-            if st.session_state.analysis_status == "running":  # Only update if not already set
-                if exit_code == 0:
-                    st.session_state.analysis_status = "completed"
-                    st.session_state.current_progress = 100
-                    st.session_state.current_step = "Analysis completed!"
-                else:
-                    st.session_state.analysis_status = "failed"
-                    st.session_state.current_step = f"Process failed with exit code: {exit_code}"
-        
-        # Display progress
-        with progress_container:
-            progress_bar = st.progress(min(st.session_state.current_progress / 100, 1.0))
-            status_text = st.text(f"{st.session_state.current_step} ({st.session_state.current_progress:.0f}%)")
-            
-            # Step indicators
-            col1, col2, col3, col4 = st.columns(4)
-            steps = ["Environment", "Data Loading", "API Calls", "Upload"]
-            step_indicators = [col1, col2, col3, col4]
-            
-            for i, (indicator, step_name) in enumerate(zip(step_indicators, steps)):
-                if st.session_state.current_progress > (i + 1) * 25:
-                    indicator.success(f"✓ {step_name}")
-                elif st.session_state.current_progress > i * 25:
-                    indicator.info(f"• {step_name}")
-                else:
-                    indicator.empty()
-        
-        # Display metrics
-        with metrics_container:
-            col1, col2, col3, col4 = st.columns(4)
-            
-            # Elapsed time
-            if st.session_state.analysis_start_time:
-                elapsed = time.time() - st.session_state.analysis_start_time
-                col1.metric("Elapsed Time", f"{elapsed:.0f}s")
-                
-                # ETA calculation
-                if st.session_state.current_progress > 5:
-                    estimated_total = elapsed * (100 / st.session_state.current_progress)
-                    eta = max(0, estimated_total - elapsed)
-                    col2.metric("ETA", f"{eta:.0f}s")
-            
-            # Success/error counts
-            success_count = len([l for l in st.session_state.analysis_output if "✓" in l or "completed successfully" in l.lower()])
-            error_count = len([l for l in st.session_state.analysis_output if "✗" in l or "error" in l.lower()])
-            
-            col3.metric("Successful Operations", success_count)
-            col4.metric("Errors", error_count)
-        
-        # Display real-time output
-        with output_container:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.subheader("Real-time Output")
-            with col2:
-                show_all = st.checkbox("Show all output", value=True, key="show_all_running")
-            
-            if st.session_state.analysis_output:
-                # Determine what to show
-                if show_all:
-                    display_lines = st.session_state.analysis_output
-                else:
-                    display_lines = st.session_state.analysis_output[-50:] if len(st.session_state.analysis_output) > 50 else st.session_state.analysis_output
-                
-                # Format output with status indicators
-                formatted_output = []
-                for line in display_lines:
-                    if any(success_indicator in line for success_indicator in ["✓", "completed successfully", "Successfully uploaded"]):
-                        formatted_output.append(f"✅ {line}")
-                    elif any(error_indicator in line for error_indicator in ["✗", "error", "Error", "failed"]):
-                        formatted_output.append(f"❌ {line}")
-                    elif any(progress_indicator in line for progress_indicator in ["Processing batch", "Fetching", "Analyzing"]):
-                        formatted_output.append(f"🔄 {line}")
-                    elif "Found" in line and "transactions" in line:
-                        formatted_output.append(f"📊 {line}")
-                    else:
-                        formatted_output.append(f"   {line}")
-                
-                # Display with scrolling
-                st.code("\n".join(formatted_output), language=None)
-        
-        # Auto-refresh while running
-        if st.session_state.analysis_status == "running":
-            time.sleep(0.5)  # Refresh every 0.5 seconds for real-time feel
             st.rerun()
     
-    elif st.session_state.analysis_status == "completed":
-        st.success("Analysis completed successfully!")
+    # Status display and real-time output handling
+    if status == "running":
+        st.info("Analysis is currently running...")
+        
+        # Create containers for status and output
+        progress_container = st.container()
+        output_container = st.container()
+        
+        # Check if we have new output
+        if st.session_state.output_queue:
+            new_lines, process_finished = get_new_output_lines(st.session_state.output_queue)
+            
+            # Add new lines to output
+            if new_lines:
+                for line in new_lines:
+                    if line.strip():  # Only add non-empty lines
+                        timestamp = datetime.now().strftime('%H:%M:%S')
+                        formatted_line = f"[{timestamp}] {line}"
+                        st.session_state.analysis_output.append(formatted_line)
+                
+                # Keep output manageable (last 1000 lines)
+                if len(st.session_state.analysis_output) > 1000:
+                    st.session_state.analysis_output = st.session_state.analysis_output[-800:]
+            
+            # Check if process finished
+            if process_finished or (process and process.poll() is not None):
+                if process and process.poll() == 0:
+                    st.session_state.analysis_status = "completed"
+                    completion_time = datetime.now().strftime('%H:%M:%S')
+                    st.session_state.analysis_output.append(f"[{completion_time}] ✅ Analysis completed successfully!")
+                else:
+                    st.session_state.analysis_status = "failed"
+                    error_time = datetime.now().strftime('%H:%M:%S')
+                    exit_code = process.poll() if process else "Unknown"
+                    st.session_state.analysis_output.append(f"[{error_time}] ❌ Analysis failed with exit code: {exit_code}")
+                
+                st.session_state.analysis_process = None
+                st.rerun()
+        
+        # Show progress info
+        with progress_container:
+            if st.session_state.analysis_start_time:
+                elapsed = time.time() - st.session_state.analysis_start_time
+                st.text(f"⏱️ Elapsed time: {elapsed:.0f} seconds")
+            
+            # Parse current step from recent output
+            recent_output = st.session_state.analysis_output[-10:] if st.session_state.analysis_output else []
+            current_step = "Starting analysis..."
+            
+            for line in reversed(recent_output):
+                line_lower = line.lower()
+                if any(keyword in line_lower for keyword in [
+                    "processing batch", "fetching", "analyzing", "uploading", 
+                    "saving", "loading", "connecting", "querying"
+                ]):
+                    # Extract the step description
+                    if "] " in line:
+                        current_step = line.split("] ", 1)[-1]
+                    else:
+                        current_step = line
+                    break
+            
+            st.text(f"🔄 Current step: {current_step}")
+        
+        # Auto-refresh every 1 second while running
+        time.sleep(1)
+        st.rerun()
+    
+    elif status == "completed":
+        st.success("✅ Analysis completed successfully!")
         if st.session_state.analysis_start_time:
             total_time = time.time() - st.session_state.analysis_start_time
-            st.text(f"Total time: {total_time:.0f} seconds")
-            
-        # Show completion summary
-        with st.expander("Analysis Summary", expanded=True):
-            total_operations = len(st.session_state.analysis_output)
-            success_operations = len([l for l in st.session_state.analysis_output if "✓" in l or "completed successfully" in l.lower()])
-            error_operations = len([l for l in st.session_state.analysis_output if "✗" in l or "error" in l.lower()])
-            
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Operations", total_operations)
-            col2.metric("Successful", success_operations)
-            col3.metric("Errors", error_operations)
+            st.text(f"⏱️ Total time: {total_time:.0f} seconds")
     
-    elif st.session_state.analysis_status == "failed":
-        st.error("Analysis failed or was stopped")
+    elif status == "failed":
+        st.error("❌ Analysis failed or was stopped")
     
     # Show output if available
     if st.session_state.analysis_output:
-        with st.expander("Analysis Output", expanded=(st.session_state.analysis_status in ["completed", "failed"])):
-            show_all = st.checkbox("Show all output", value=True, key="show_all_final")
+        with st.expander("Analysis Output", expanded=(status == "running")):
+            # Show last 100 lines to keep it manageable
+            display_lines = st.session_state.analysis_output[-100:] if len(st.session_state.analysis_output) > 100 else st.session_state.analysis_output
             
-            if show_all:
-                display_lines = st.session_state.analysis_output
-            else:
-                display_lines = st.session_state.analysis_output[-100:] if len(st.session_state.analysis_output) > 100 else st.session_state.analysis_output
-            
-            # Format output
+            # Format output with better status indicators
             formatted_output = []
             for line in display_lines:
-                if any(success_indicator in line for success_indicator in ["✓", "completed successfully", "Successfully uploaded"]):
+                line_lower = line.lower()
+                if any(success_word in line_lower for success_word in ["✓", "completed successfully", "successfully uploaded", "success"]):
                     formatted_output.append(f"✅ {line}")
-                elif any(error_indicator in line for error_indicator in ["✗", "error", "Error", "failed"]):
+                elif any(error_word in line_lower for error_word in ["✗", "error", "failed", "exception"]):
                     formatted_output.append(f"❌ {line}")
-                elif any(progress_indicator in line for progress_indicator in ["Processing batch", "Fetching", "Analyzing"]):
+                elif any(progress_word in line_lower for progress_word in ["processing", "fetching", "analyzing", "loading"]):
                     formatted_output.append(f"🔄 {line}")
-                elif "Found" in line and "transactions" in line:
-                    formatted_output.append(f"📊 {line}")
+                elif any(info_word in line_lower for info_word in ["found", "total", "starting"]):
+                    formatted_output.append(f"ℹ️  {line}")
                 else:
                     formatted_output.append(f"   {line}")
             
-            st.code("\n".join(formatted_output), language=None)
+            # Create a scrollable text area for better viewing
+            output_text = "\n".join(formatted_output)
+            st.text_area(
+                "Live Output",
+                value=output_text,
+                height=400,
+                key="output_display",
+                disabled=True
+            )
         
         # Download option
-        log_content = "\n".join(st.session_state.analysis_output)
-        st.download_button(
-            label="Download Analysis Log",
-            data=log_content,
-            file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain",
-            key="download_final_log"
-        )
+        if st.session_state.analysis_output:
+            log_content = "\n".join(st.session_state.analysis_output)
+            st.download_button(
+                label="📥 Download Analysis Log",
+                data=log_content,
+                file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                key="download_log"
+            )
 
 def dashboard_tab():
     """
@@ -626,7 +523,11 @@ def dashboard_tab():
             )
             st.plotly_chart(fig_pie, use_container_width=True)
     
- = px.pie(
+    with col2:
+        st.subheader("DEX Address Distribution")
+        if 'is_dex' in filtered_df.columns:
+            dex_counts = filtered_df['is_dex'].value_counts()
+            fig_dex = px.pie(
                 values=dex_counts.values,
                 names=['Non-DEX' if not x else 'DEX Addresses' for x in dex_counts.index],
                 title="DEX Status"
@@ -668,10 +569,10 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    st.title("Validator Analysis Platform")
+    st.title("🔍 Validator Analysis Platform")
     
     # Create tabs
-    tab1, tab2 = st.tabs(["Run Analysis", "Dashboard"])
+    tab1, tab2 = st.tabs(["🚀 Run Analysis", "📊 Dashboard"])
     
     with tab1:
         analysis_tab()
