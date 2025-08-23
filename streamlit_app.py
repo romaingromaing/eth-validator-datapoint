@@ -131,13 +131,17 @@ def start_analysis_subprocess():
     Returns the process object
     """
     try:
+        # Set environment variable to force unbuffered output
+        env = os.environ.copy()
+        env['PYTHONUNBUFFERED'] = '1'
+        
         process = subprocess.Popen(
             [sys.executable, "-u", "validator_analysis.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
             bufsize=0,  # Unbuffered for real-time output
-            env=os.environ.copy(),
+            env=env,
             cwd=os.getcwd()
         )
         return process
@@ -150,11 +154,12 @@ def read_process_output_thread(process, output_queue):
     Thread function to read process output and put it in a queue
     """
     try:
-        while True:
-            line = process.stdout.readline()
-            if not line:
-                break
-            output_queue.put(line.strip())
+        for line in iter(process.stdout.readline, ''):
+            if line:
+                # Strip the line but preserve it even if it's just whitespace/formatting
+                clean_line = line.rstrip('\n\r')
+                if clean_line or line.strip():  # Keep lines with content or meaningful whitespace
+                    output_queue.put(clean_line)
         
         # Signal that the process has finished
         output_queue.put("__PROCESS_FINISHED__")
@@ -176,7 +181,7 @@ def get_new_output_lines(output_queue):
                 if line == "__PROCESS_FINISHED__":
                     process_finished = True
                     break
-                elif line:  # Only add non-empty lines
+                else:  # Add all lines, even empty ones for formatting
                     lines.append(line)
             except queue.Empty:
                 break
@@ -231,6 +236,23 @@ def analysis_tab():
         return
     
     st.success("All requirements met. Ready to run analysis!")
+    
+    # Add manual dashboard access button
+    st.markdown("---")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("📊 Go to Dashboard", use_container_width=True):
+            # Clear cache and indicate dashboard should be viewed
+            st.cache_data.clear()
+            st.session_state.force_dashboard = True
+            st.rerun()
+    with col2:
+        # Refresh data button
+        if st.button("🔄 Refresh Data", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Data cache cleared. Next dashboard view will fetch fresh data.")
+    
+    st.markdown("---")
     
     # Initialize session state
     if 'analysis_process' not in st.session_state:
@@ -345,14 +367,13 @@ def analysis_tab():
             # Add new lines to output
             if new_lines:
                 for line in new_lines:
-                    if line.strip():  # Only add non-empty lines
-                        timestamp = datetime.now().strftime('%H:%M:%S')
-                        formatted_line = f"[{timestamp}] {line}"
-                        st.session_state.analysis_output.append(formatted_line)
+                    timestamp = datetime.now().strftime('%H:%M:%S')
+                    formatted_line = f"[{timestamp}] {line}"
+                    st.session_state.analysis_output.append(formatted_line)
                 
-                # Keep output manageable (last 1000 lines)
-                if len(st.session_state.analysis_output) > 1000:
-                    st.session_state.analysis_output = st.session_state.analysis_output[-800:]
+                # Keep output manageable (last 2000 lines)
+                if len(st.session_state.analysis_output) > 2000:
+                    st.session_state.analysis_output = st.session_state.analysis_output[-1500:]
             
             # Check if process finished
             if process_finished or (process and process.poll() is not None):
@@ -394,8 +415,8 @@ def analysis_tab():
             
             st.text(f"🔄 Current step: {current_step}")
         
-        # Auto-refresh every 1 second while running
-        time.sleep(1)
+        # Auto-refresh every 0.5 seconds while running for more responsive updates
+        time.sleep(0.5)
         st.rerun()
     
     elif status == "completed":
@@ -403,27 +424,38 @@ def analysis_tab():
         if st.session_state.analysis_start_time:
             total_time = time.time() - st.session_state.analysis_start_time
             st.text(f"⏱️ Total time: {total_time:.0f} seconds")
+        
+        # Add dashboard button when analysis is complete
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("📊 View Dashboard", type="primary", use_container_width=True):
+                # Clear data cache to force refresh
+                st.cache_data.clear()
+                # Set flag to show dashboard message
+                st.session_state.force_dashboard = True
+                st.rerun()
     
     elif status == "failed":
         st.error("❌ Analysis failed or was stopped")
     
-    # Show output if available
+            # Show output if available
     if st.session_state.analysis_output:
         with st.expander("Analysis Output", expanded=(status == "running")):
-            # Show last 100 lines to keep it manageable
-            display_lines = st.session_state.analysis_output[-100:] if len(st.session_state.analysis_output) > 100 else st.session_state.analysis_output
+            # Show last 200 lines to keep it manageable but comprehensive
+            display_lines = st.session_state.analysis_output[-200:] if len(st.session_state.analysis_output) > 200 else st.session_state.analysis_output
             
             # Format output with better status indicators
             formatted_output = []
             for line in display_lines:
                 line_lower = line.lower()
-                if any(success_word in line_lower for success_word in ["✓", "completed successfully", "successfully uploaded", "success"]):
+                if any(success_word in line_lower for success_word in ["✓", "completed successfully", "successfully uploaded", "success", "saved", "finished"]):
                     formatted_output.append(f"✅ {line}")
-                elif any(error_word in line_lower for error_word in ["✗", "error", "failed", "exception"]):
+                elif any(error_word in line_lower for error_word in ["✗", "error", "failed", "exception", "timeout"]):
                     formatted_output.append(f"❌ {line}")
-                elif any(progress_word in line_lower for progress_word in ["processing", "fetching", "analyzing", "loading"]):
+                elif any(progress_word in line_lower for progress_word in ["processing", "fetching", "analyzing", "loading", "getting", "found"]):
                     formatted_output.append(f"🔄 {line}")
-                elif any(info_word in line_lower for info_word in ["found", "total", "starting"]):
+                elif any(info_word in line_lower for info_word in ["starting", "total", "batch", "query"]):
                     formatted_output.append(f"ℹ️  {line}")
                 else:
                     formatted_output.append(f"   {line}")
@@ -433,10 +465,13 @@ def analysis_tab():
             st.text_area(
                 "Live Output",
                 value=output_text,
-                height=400,
-                key="output_display",
+                height=500,
+                key=f"output_display_{status}_{len(st.session_state.analysis_output)}",
                 disabled=True
             )
+            
+            # Show total lines info
+            st.caption(f"Showing last {len(display_lines)} of {len(st.session_state.analysis_output)} total lines")
         
         # Download option
         if st.session_state.analysis_output:
@@ -571,7 +606,16 @@ def main():
     
     st.title("🔍 Validator Analysis Platform")
     
-    # Create tabs
+    # Initialize active tab in session state  
+    if 'force_dashboard' not in st.session_state:
+        st.session_state.force_dashboard = False
+    
+    # Show message if user clicked dashboard button
+    if st.session_state.force_dashboard:
+        st.info("💡 **Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
+        st.session_state.force_dashboard = False
+    
+    # Create tabs normally
     tab1, tab2 = st.tabs(["🚀 Run Analysis", "📊 Dashboard"])
     
     with tab1:
