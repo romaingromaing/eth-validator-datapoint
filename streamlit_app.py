@@ -568,6 +568,26 @@ def dashboard_tab():
         dex_filter = "All"
         st.sidebar.info("DEX data not available")
     
+    # Active after Shapella filter (April 12, 2023)
+    if 'last_transaction_time' in df.columns:
+        shapella_filter = st.sidebar.selectbox(
+            "Active after Shapella?",
+            ["All", "Active after Shapella", "Not active after Shapella"]
+        )
+    else:
+        shapella_filter = "All"
+        st.sidebar.info("Transaction time data not available")
+    
+    # Active after Merge filter (September 15, 2022)
+    if 'last_transaction_time' in df.columns:
+        merge_filter = st.sidebar.selectbox(
+            "Active after Merge?",
+            ["All", "Active after Merge", "Not active after Merge"]
+        )
+    else:
+        merge_filter = "All"
+        st.sidebar.info("Transaction time data not available")
+    
     # Apply filters
     filtered_df = df.copy()
     
@@ -582,6 +602,22 @@ def dashboard_tab():
             filtered_df = filtered_df[filtered_df['is_dex'] == True]
         elif dex_filter == "Non-DEX Addresses":
             filtered_df = filtered_df[filtered_df['is_dex'] == False]
+    
+    # Apply Shapella filter (April 12, 2023)
+    if 'last_transaction_time' in df.columns:
+        shapella_date = pd.Timestamp('2023-04-12')
+        if shapella_filter == "Active after Shapella":
+            filtered_df = filtered_df[filtered_df['last_transaction_time'] > shapella_date]
+        elif shapella_filter == "Not active after Shapella":
+            filtered_df = filtered_df[(filtered_df['last_transaction_time'] <= shapella_date) | (filtered_df['last_transaction_time'].isna())]
+    
+    # Apply Merge filter (September 15, 2022)
+    if 'last_transaction_time' in df.columns:
+        merge_date = pd.Timestamp('2022-09-15')
+        if merge_filter == "Active after Merge":
+            filtered_df = filtered_df[filtered_df['last_transaction_time'] > merge_date]
+        elif merge_filter == "Not active after Merge":
+            filtered_df = filtered_df[(filtered_df['last_transaction_time'] <= merge_date) | (filtered_df['last_transaction_time'].isna())]
     
     # Main dashboard metrics
     col1, col2, col3, col4 = st.columns(4)
