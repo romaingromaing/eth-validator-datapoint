@@ -73,12 +73,32 @@ def load_data_from_supabase():
         # Initialize Supabase client
         supabase: Client = create_client(config.supabase_url, config.supabase_key)
         
-        # Get total count first
-        count_response = supabase.table(config.table_name).select("*", count="exact").execute()
-        total_count = count_response.count
+        # Paginated approach
+        all_data = []
+        page_size = 5000
+        offset = 0
         
-        # Then fetch all records
-        response = supabase.table(config.table_name).select("*").limit(total_count).execute()
+        while True:
+            response = supabase.table(config.table_name).select("*").range(offset, offset + page_size - 1).execute()
+            
+            if not response.data:
+                break
+                
+            all_data.extend(response.data)
+            
+            # If we got less than page_size records, we've reached the end
+            if len(response.data) < page_size:
+                break
+                
+            offset += page_size
+        
+        # Create a mock response object for consistency
+        class MockResponse:
+            def __init__(self, data):
+                self.data = data
+        
+        response = MockResponse(all_data)
+        
         metadata = {
             'table_name': config.table_name,
             'record_count': len(response.data) if response.data else 0,
