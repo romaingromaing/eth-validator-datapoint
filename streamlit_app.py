@@ -171,7 +171,7 @@ def start_analysis_subprocess():
         
         # Using the fixed script name from validator_analysis.py
         process = subprocess.Popen(
-            [sys.executable, "-u", "fixed_validator_analysis.py"],
+            [sys.executable, "-u", "validator_analysis.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
@@ -243,7 +243,7 @@ def analysis_tab():
     """)
     
     # Check if required files exist
-    required_files = ["fixed_validator_analysis.py", "0x00-validators.json"]
+    required_files = ["validator_analysis.py", "0x00-validators.json"]
     missing_files = [f for f in required_files if not os.path.exists(f)]
     
     if missing_files:
