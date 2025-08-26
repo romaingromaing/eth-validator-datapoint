@@ -646,9 +646,12 @@ def dashboard_tab():
         if col in filtered_df.columns:
             key_columns.append(col)
     
-    # Ensure 'status' is always included if it exists in the dataframe
-    if 'status' in filtered_df.columns and 'status' not in key_columns:
-        key_columns.append('status')
+    # Handle both 'status' and 'state' column names (fallback for different API responses)
+    if 'status' not in key_columns:
+        if 'state' in filtered_df.columns:
+            key_columns.insert(2, 'state')  # Insert at position where 'status' would be
+        elif 'status' in filtered_df.columns:
+            key_columns.insert(2, 'status')
     
     # If no preferred columns found, show all
     if not key_columns:
