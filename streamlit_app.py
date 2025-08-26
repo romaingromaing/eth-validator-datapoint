@@ -3,8 +3,6 @@ import pandas as pd
 import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
 import numpy as np
 import subprocess
@@ -58,7 +56,6 @@ class Config:
             """)
             st.stop()
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def load_data_from_supabase():
     """
@@ -172,8 +169,9 @@ def start_analysis_subprocess():
         env = os.environ.copy()
         env['PYTHONUNBUFFERED'] = '1'
         
+        # Using the fixed script name from validator_analysis.py
         process = subprocess.Popen(
-            [sys.executable, "-u", "validator_analysis.py"],
+            [sys.executable, "-u", "fixed_validator_analysis.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
@@ -245,7 +243,7 @@ def analysis_tab():
     """)
     
     # Check if required files exist
-    required_files = ["validator_analysis.py", "0x00-validators.json"]
+    required_files = ["fixed_validator_analysis.py", "0x00-validators.json"]
     missing_files = [f for f in required_files if not os.path.exists(f)]
     
     if missing_files:
@@ -276,7 +274,7 @@ def analysis_tab():
     
     # Add manual dashboard access button
     st.markdown("---")
-    if st.button("📊 Go to Dashboard", use_container_width=True):
+    if st.button("Go to Dashboard", use_container_width=True):
         # Clear cache and indicate dashboard should be viewed
         st.cache_data.clear()
         st.session_state.force_dashboard = True
@@ -387,12 +385,12 @@ def analysis_tab():
                 if process and process.poll() == 0:
                     st.session_state.analysis_status = "completed"
                     completion_time = datetime.now().strftime('%H:%M:%S')
-                    st.session_state.analysis_output.append(f"[{completion_time}] ✅ Analysis completed successfully!")
+                    st.session_state.analysis_output.append(f"[{completion_time}] Analysis completed successfully!")
                 else:
                     st.session_state.analysis_status = "failed"
                     error_time = datetime.now().strftime('%H:%M:%S')
                     exit_code = process.poll() if process else "Unknown"
-                    st.session_state.analysis_output.append(f"[{error_time}] ❌ Analysis failed with exit code: {exit_code}")
+                    st.session_state.analysis_output.append(f"[{error_time}] Analysis failed with exit code: {exit_code}")
                 
                 st.session_state.analysis_process = None
                 st.rerun()
@@ -401,7 +399,7 @@ def analysis_tab():
         with progress_container:
             if st.session_state.analysis_start_time:
                 elapsed = time.time() - st.session_state.analysis_start_time
-                st.text(f"⏱️ Elapsed time: {elapsed:.0f} seconds")
+                st.text(f"Elapsed time: {elapsed:.0f} seconds")
             
             # Parse current step from recent output
             recent_output = st.session_state.analysis_output[-10:] if st.session_state.analysis_output else []
@@ -420,21 +418,21 @@ def analysis_tab():
                         current_step = line
                     break
             
-            st.text(f"🔄 Current step: {current_step}")
+            st.text(f"Current step: {current_step}")
         
         # Auto-refresh every 0.5 seconds while running for more responsive updates
         time.sleep(0.5)
         st.rerun()
     
     elif status == "completed":
-        st.success("✅ Analysis completed successfully!")
+        st.success("Analysis completed successfully!")
         if st.session_state.analysis_start_time:
             total_time = time.time() - st.session_state.analysis_start_time
-            st.text(f"⏱️ Total time: {total_time:.0f} seconds")
+            st.text(f"Total time: {total_time:.0f} seconds")
         
         # Add dashboard button when analysis is complete
         st.markdown("---")
-        if st.button("📊 View Dashboard", type="primary", use_container_width=True):
+        if st.button("View Dashboard", type="primary", use_container_width=True):
             # Clear data cache to force refresh
             st.cache_data.clear()
             # Set flag to show dashboard message
@@ -442,9 +440,9 @@ def analysis_tab():
             st.rerun()
     
     elif status == "failed":
-        st.error("❌ Analysis failed or was stopped")
+        st.error("Analysis failed or was stopped")
     
-            # Show output if available
+    # Show output if available
     if st.session_state.analysis_output:
         with st.expander("Analysis Output", expanded=(status == "running")):
             # Show last 200 lines to keep it manageable but comprehensive
@@ -454,9 +452,9 @@ def analysis_tab():
             formatted_output = []
             for line in display_lines:
                 line_lower = line.lower()
-                if any(success_word in line_lower for success_word in ["✓", "completed successfully", "successfully uploaded", "success", "saved", "finished"]):
+                if any(success_word in line_lower for success_word in ["completed successfully", "successfully uploaded", "success", "saved", "finished"]):
                     formatted_output.append(f"✅ {line}")
-                elif any(error_word in line_lower for error_word in ["✗", "error", "failed", "exception", "timeout"]):
+                elif any(error_word in line_lower for error_word in ["error", "failed", "exception", "timeout"]):
                     formatted_output.append(f"❌ {line}")
                 elif any(progress_word in line_lower for progress_word in ["processing", "fetching", "analyzing", "loading", "getting", "found"]):
                     formatted_output.append(f"🔄 {line}")
@@ -482,7 +480,7 @@ def analysis_tab():
         if st.session_state.analysis_output:
             log_content = "\n".join(st.session_state.analysis_output)
             st.download_button(
-                label="📥 Download Analysis Log",
+                label="Download Analysis Log",
                 data=log_content,
                 file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
                 mime="text/plain",
@@ -498,7 +496,7 @@ def dashboard_tab():
     # Add refresh button at the top of dashboard
     col1, col2, col3 = st.columns([2, 1, 2])
     with col2:
-        if st.button("🔄 Refresh Data", use_container_width=True):
+        if st.button("Refresh Data", use_container_width=True):
             st.cache_data.clear()
             st.success("Data refreshed! Loading latest data from database...")
             st.rerun()
@@ -509,9 +507,9 @@ def dashboard_tab():
     
     # Show connection status
     if metadata['success']:
-        st.success(f"✅ Successfully loaded {metadata['record_count']} records from table '{metadata['table_name']}'")
+        st.success(f"Successfully loaded {metadata['record_count']} records from table '{metadata['table_name']}'")
     else:
-        st.error(f"❌ Failed to load data: {metadata['error']}")
+        st.error(f"Failed to load data: {metadata['error']}")
         
         # Show debugging information
         with st.expander("Debug Information"):
@@ -543,143 +541,95 @@ def dashboard_tab():
     
     # Show data summary
     if not df.empty:
-        st.info(f"📊 Displaying data from {len(df)} validator records from database")
+        st.info(f"Displaying data from {len(df)} validator records from database")
     
-    # Sidebar filters
+    # Sidebar filters - Combined Activity Filter
     st.sidebar.header("Filters")
     
-    # Smart contract filter
-    if 'is_smart_contract' in df.columns:
-        contract_filter = st.sidebar.selectbox(
-            "Smart Contract Status",
-            ["All", "Smart Contract Deployers", "Non-Deployers"]
-        )
-    else:
-        contract_filter = "All"
-        st.sidebar.info("Smart contract data not available")
+    activity_filter = st.sidebar.selectbox(
+        "Validator Activity",
+        ["All", "Active after Shapella (Apr 12, 2023)", "Active after Merge (Sep 15, 2022)"]
+    )
     
-    # DEX filter  
-    if 'is_dex' in df.columns:
-        dex_filter = st.sidebar.selectbox(
-            "DEX Status", 
-            ["All", "DEX Addresses", "Non-DEX Addresses"]
-        )
-    else:
-        dex_filter = "All"
-        st.sidebar.info("DEX data not available")
-    
-    # Active after Shapella filter (April 12, 2023)
-    if 'last_transaction_time' in df.columns:
-        shapella_filter = st.sidebar.selectbox(
-            "Active after Shapella?",
-            ["All", "Active after Shapella", "Not active after Shapella"]
-        )
-    else:
-        shapella_filter = "All"
-        st.sidebar.info("Transaction time data not available")
-    
-    # Active after Merge filter (September 15, 2022)
-    if 'last_transaction_time' in df.columns:
-        merge_filter = st.sidebar.selectbox(
-            "Active after Merge?",
-            ["All", "Active after Merge", "Not active after Merge"]
-        )
-    else:
-        merge_filter = "All"
-        st.sidebar.info("Transaction time data not available")
-    
-    # Apply filters
+    # Apply activity filters
     filtered_df = df.copy()
     
-    if 'is_smart_contract' in df.columns:
-        if contract_filter == "Smart Contract Deployers":
-            filtered_df = filtered_df[filtered_df['is_smart_contract'] == True]
-        elif contract_filter == "Non-Deployers":
-            filtered_df = filtered_df[filtered_df['is_smart_contract'] == False]
-    
-    if 'is_dex' in df.columns:
-        if dex_filter == "DEX Addresses":
-            filtered_df = filtered_df[filtered_df['is_dex'] == True]
-        elif dex_filter == "Non-DEX Addresses":
-            filtered_df = filtered_df[filtered_df['is_dex'] == False]
-    
-    # Apply Shapella filter (April 12, 2023)
     if 'last_transaction_time' in df.columns:
-        shapella_date = pd.Timestamp('2023-04-12')
-        if shapella_filter == "Active after Shapella":
+        if activity_filter == "Active after Shapella (Apr 12, 2023)":
+            shapella_date = pd.Timestamp('2023-04-12')
             filtered_df = filtered_df[filtered_df['last_transaction_time'] > shapella_date]
-        elif shapella_filter == "Not active after Shapella":
-            filtered_df = filtered_df[(filtered_df['last_transaction_time'] <= shapella_date) | (filtered_df['last_transaction_time'].isna())]
-    
-    # Apply Merge filter (September 15, 2022)
-    if 'last_transaction_time' in df.columns:
-        merge_date = pd.Timestamp('2022-09-15')
-        if merge_filter == "Active after Merge":
+        elif activity_filter == "Active after Merge (Sep 15, 2022)":
+            merge_date = pd.Timestamp('2022-09-15')
             filtered_df = filtered_df[filtered_df['last_transaction_time'] > merge_date]
-        elif merge_filter == "Not active after Merge":
-            filtered_df = filtered_df[(filtered_df['last_transaction_time'] <= merge_date) | (filtered_df['last_transaction_time'].isna())]
     
-    # Main dashboard metrics
-    col1, col2, col3, col4 = st.columns(4)
+    # Calculate validator status (active/inactive)
+    if 'status' in filtered_df.columns:
+        active_validators = len(filtered_df[filtered_df['status'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
+        inactive_validators = len(filtered_df[~filtered_df['status'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
+    else:
+        # Fallback if status column doesn't exist
+        active_validators = len(filtered_df)
+        inactive_validators = 0
+    
+    # Calculate unique deposit addresses statistics
+    unique_deposit_addresses = filtered_df['deposit_address'].nunique() if 'deposit_address' in filtered_df.columns else 0
+    
+    # Get unique deposit address breakdown
+    if 'deposit_address' in filtered_df.columns:
+        unique_addresses_df = filtered_df[['deposit_address', 'is_smart_contract', 'is_dex']].drop_duplicates(subset=['deposit_address'])
+        
+        # Count by category
+        if 'is_smart_contract' in unique_addresses_df.columns and 'is_dex' in unique_addresses_df.columns:
+            from_dex = unique_addresses_df['is_dex'].sum()
+            from_smart_contract = unique_addresses_df[
+                (unique_addresses_df['is_smart_contract'] == True) & 
+                (unique_addresses_df['is_dex'] == False)
+            ].shape[0]
+            from_wallet = unique_addresses_df[
+                (unique_addresses_df['is_smart_contract'] == False) & 
+                (unique_addresses_df['is_dex'] == False)
+            ].shape[0]
+        else:
+            from_dex = 0
+            from_smart_contract = 0
+            from_wallet = unique_deposit_addresses
+    else:
+        from_dex = 0
+        from_smart_contract = 0
+        from_wallet = 0
+    
+    # Validator Status Score Cards (3 cards)
+    st.subheader("Validator Status")
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric("Total Validators", len(filtered_df))
     
     with col2:
-        if 'is_smart_contract' in filtered_df.columns:
-            smart_contract_count = filtered_df['is_smart_contract'].sum()
-            st.metric("Smart Contract Deployers", smart_contract_count)
-        else:
-            st.metric("Smart Contract Deployers", "N/A")
+        st.metric("Active Validators", active_validators)
     
     with col3:
-        if 'is_dex' in filtered_df.columns:
-            dex_count = filtered_df['is_dex'].sum()
-            st.metric("DEX Addresses", dex_count)
-        else:
-            st.metric("DEX Addresses", "N/A")
+        st.metric("Inactive Validators", inactive_validators)
     
-    with col4:
-        if 'last_transaction_time' in filtered_df.columns:
-            active_validators = filtered_df['last_transaction_time'].notna().sum()
-            st.metric("With Transaction History", active_validators)
-        else:
-            st.metric("With Transaction History", "N/A")
+    st.markdown("---")
     
-    # Charts
-    col1, col2 = st.columns(2)
+    # Deposit Address Source Score Cards (4 cards)
+    st.subheader("Deposit Address Sources")
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.subheader("Smart Contract Distribution")
-        if 'is_smart_contract' in filtered_df.columns:
-            contract_counts = filtered_df['is_smart_contract'].value_counts()
-            if len(contract_counts) > 0:
-                fig_pie = px.pie(
-                    values=contract_counts.values,
-                    names=['Non-Deployers' if not x else 'Smart Contract Deployers' for x in contract_counts.index],
-                    title="Smart Contract Status"
-                )
-                st.plotly_chart(fig_pie, use_container_width=True)
-            else:
-                st.info("No smart contract data available")
-        else:
-            st.info("Smart contract analysis not completed")
+        st.metric("Total Unique Addresses", unique_deposit_addresses)
     
     with col2:
-        st.subheader("DEX Address Distribution")
-        if 'is_dex' in filtered_df.columns:
-            dex_counts = filtered_df['is_dex'].value_counts()
-            if len(dex_counts) > 0:
-                fig_dex = px.pie(
-                    values=dex_counts.values,
-                    names=['Non-DEX' if not x else 'DEX Addresses' for x in dex_counts.index],
-                    title="DEX Status"
-                )
-                st.plotly_chart(fig_dex, use_container_width=True)
-            else:
-                st.info("No DEX data available")
-        else:
-            st.info("DEX analysis not completed")
+        st.metric("From Wallet", from_wallet)
+    
+    with col3:
+        st.metric("From Smart Contract", from_smart_contract)
+    
+    with col4:
+        st.metric("From DEX", from_dex)
+    
+    st.markdown("---")
     
     # Data table
     st.subheader("Validator Data")
@@ -690,7 +640,7 @@ def dashboard_tab():
     
     # Show key columns by default if they exist
     key_columns = []
-    preferred_columns = ['index', 'pubkey', 'deposit_address', 'last_transaction_time', 'is_smart_contract', 'is_dex']
+    preferred_columns = ['index', 'pubkey', 'status', 'deposit_address', 'last_transaction_time', 'is_smart_contract', 'is_dex']
     
     for col in preferred_columns:
         if col in filtered_df.columns:
@@ -714,7 +664,7 @@ def dashboard_tab():
     # Download section
     csv = filtered_df.to_csv(index=False)
     st.download_button(
-        label="📥 Download as CSV",
+        label="Download as CSV",
         data=csv,
         file_name=f"validator_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         mime="text/csv"
@@ -728,15 +678,15 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    st.title("🔍 Validator Analysis Platform")
+    st.title("Validator Analysis Platform")
     
     # Show message if user clicked dashboard button
     if 'force_dashboard' in st.session_state and st.session_state.force_dashboard:
-        st.info("💡 **Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
+        st.info("**Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
         st.session_state.force_dashboard = False
     
     # Create tabs
-    tab1, tab2 = st.tabs(["🚀 Run Analysis", "📊 Dashboard"])
+    tab1, tab2 = st.tabs(["Run Analysis", "Dashboard"])
     
     with tab1:
         analysis_tab()

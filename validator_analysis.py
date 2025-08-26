@@ -204,16 +204,8 @@ def upload_csv_to_supabase(csv_file_path, config):
             conn.close()
         return False
 
-# Initialize configuration
-config = Config()
-
-input_file = '0x00-validators.json'
-output_file = 'last_datapoint.csv'  # Changed to CSV format
-
-with open(input_file, 'r') as f:
-    validators = json.load(f)
-
 def get_deposit_addresses(pubkeys_batch):
+    """Get deposit addresses for a batch of pubkeys"""
     pubkeys_str = ','.join(pubkeys_batch)
     url = f"https://beaconcha.in/api/v1/validator/{pubkeys_str}/deposits"
     try:
@@ -235,47 +227,161 @@ def get_deposit_addresses(pubkeys_batch):
         pubkey_to_address[pubkey] = from_address
     return pubkey_to_address
 
-pubkey_to_validator = {val['pubkey'].lower(): val for val in validators if 'pubkey' in val}
-all_pubkeys = list(pubkey_to_validator.keys())
+def get_validator_info(pubkeys_batch):
+    """Get validator status and withdrawal credentials for a batch of pubkeys"""
+    pubkeys_str = ','.join(pubkeys_batch)
+    url = f"https://beaconcha.in/api/v1/validator/{pubkeys_str}"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if data.get('status') != 'OK':
+            print(f"API error: {data}")
+            return {}
+        validators_data = data.get('data', [])
+    except Exception as e:
+        print(f"Request failed: {e}")
+        return {}
 
-# Calculate total batches upfront
-total_batches = (len(all_pubkeys) + config.batch_size - 1) // config.batch_size
-print(f"Starting processing of {len(all_pubkeys):,} pubkeys in {total_batches} batches")
-print(f"Estimated completion time: {(total_batches * config.delay_seconds) / 3600:.1f} hours")
-
-for i in range(0, len(all_pubkeys), config.batch_size):
-    batch = all_pubkeys[i:i + config.batch_size]
-    current_batch = i // config.batch_size + 1
+    pubkey_to_info = {}
+    # Handle both single validator and batch responses
+    if not isinstance(validators_data, list):
+        validators_data = [validators_data]
     
-    print(f"Processing batch {current_batch}/{total_batches} ({current_batch/total_batches*100:.1f}%): {len(batch)} pubkeys")
+    for validator in validators_data:
+        pubkey = validator.get('pubkey', '').lower()
+        pubkey_to_info[pubkey] = {
+            'status': validator.get('status'),
+            'withdrawal_credentials': validator.get('withdrawalcredentials')
+        }
+    return pubkey_to_info
+
+def load_validators_from_json(input_file):
+    """
+    Load validators from JSON file and convert to the expected format
+    """
+    print(f"Loading validators from {input_file}")
     
-    deposit_map = get_deposit_addresses(batch)
-    for pubkey, address in deposit_map.items():
-        if pubkey in pubkey_to_validator:
-            pubkey_to_validator[pubkey]['deposit_address'] = address
+    try:
+        with open(input_file, 'r') as f:
+            validators_data = json.load(f)
+        
+        # Convert JSON data to DataFrame format expected by the rest of the pipeline
+        # Assuming the JSON structure contains validator information
+        if isinstance(validators_data, list):
+            # If it's a list of validators, convert to DataFrame
+            df = pd.DataFrame(validators_data)
+            
+            # Ensure we have the required columns - if not, create them
+            if 'pubkey' not in df.columns and 'pubkeys' in df.columns:
+                df['pubkey'] = df['pubkeys']
+            
+            if 'index' not in df.columns:
+                # Create index if it doesn't exist
+                df['index'] = range(len(df))
+            
+            # Select only the columns we need
+            required_columns = ['index', 'pubkey']
+            available_columns = [col for col in required_columns if col in df.columns]
+            df_filtered = df[available_columns].copy()
+            
+            print(f"Loaded {len(df_filtered)} validators from JSON")
+            return df_filtered
+        else:
+            raise ValueError("JSON file does not contain a list of validators")
+            
+    except FileNotFoundError:
+        print(f"Error: File {input_file} not found")
+        raise
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON format in {input_file}: {e}")
+        raise
+    except Exception as e:
+        print(f"Error loading {input_file}: {e}")
+        raise
+
+def process_validators(input_file, first_output_file, config):
+    """
+    Process validators from JSON file to get deposit addresses, withdrawal credentials, and status
+    Filter for only 0x00 withdrawal credentials
+    """
+    # Load the JSON file and convert to expected format
+    df = load_validators_from_json(input_file)
     
-    if current_batch < total_batches:  # Don't sleep after the last batch
-        time.sleep(config.delay_seconds)
+    # Create validator dictionary with lowercase pubkeys
+    validators = df.to_dict('records')
+    pubkey_to_validator = {val['pubkey'].lower(): val for val in validators if 'pubkey' in val}
+    all_pubkeys = list(pubkey_to_validator.keys())
 
-enriched_validators = list(pubkey_to_validator.values())
-for validator in enriched_validators:
-    if 'index' in validator:
-        try:
-            validator['index'] = int(validator['index'])
-        except ValueError:
-            print(f"Failed to convert index: {validator.get('pubkey', 'unknown')}: {validator['index']}")
+    print(f"Loaded {len(all_pubkeys):,} validators from {input_file}")
 
-# Convert to DataFrame for further processing
-df = pd.DataFrame(enriched_validators)
+    # Calculate total batches upfront
+    total_batches = (len(all_pubkeys) + config.batch_size - 1) // config.batch_size
+    print(f"Starting processing of {len(all_pubkeys):,} pubkeys in {total_batches} batches")
+    print(f"Estimated completion time: {(total_batches * config.delay_seconds) / 3600:.1f} hours")
 
-# Strategy: Extract unique deposit_addresses, perform operations, merge back
+    for i in range(0, len(all_pubkeys), config.batch_size):
+        batch = all_pubkeys[i:i + config.batch_size]
+        current_batch = i // config.batch_size + 1
+        
+        print(f"Processing batch {current_batch}/{total_batches} ({current_batch/total_batches*100:.1f}%): {len(batch)} pubkeys")
+        
+        # Get deposit addresses
+        deposit_map = get_deposit_addresses(batch)
+        
+        # Get validator info (status and withdrawal credentials)
+        validator_info_map = get_validator_info(batch)
+        
+        # Update validators with deposit addresses and validator info
+        for pubkey in batch:
+            if pubkey in pubkey_to_validator:
+                # Add deposit address
+                if pubkey in deposit_map:
+                    pubkey_to_validator[pubkey]['deposit_address'] = deposit_map[pubkey]
+                
+                # Add validator status and withdrawal credentials
+                if pubkey in validator_info_map:
+                    pubkey_to_validator[pubkey]['status'] = validator_info_map[pubkey]['status']
+                    pubkey_to_validator[pubkey]['withdrawal_credentials'] = validator_info_map[pubkey]['withdrawal_credentials']
+        
+        if current_batch < total_batches:  # Don't sleep after the last batch
+            time.sleep(config.delay_seconds)
 
-# Step 1: Get unique deposit_addresses
-unique_addresses = df['deposit_address'].drop_duplicates()
-# Step 2: Create a DataFrame with unique addresses for operations
-unique_df = pd.DataFrame({'deposit_address': unique_addresses.values})
+    # Convert to list
+    enriched_validators = list(pubkey_to_validator.values())
+    
+    # Convert index to int where possible
+    for validator in enriched_validators:
+        if 'index' in validator:
+            try:
+                validator['index'] = int(validator['index'])
+            except ValueError:
+                print(f"Failed to convert index: {validator.get('pubkey', 'unknown')}: {validator['index']}")
 
-# Dune Sim API Calls & Data Extraction
+    # Filter for only validators with withdrawal credentials starting with "0x00"
+    print(f"Filtering validators with withdrawal credentials starting with '0x00'...")
+    validators_0x00 = []
+    total_validators = len(enriched_validators)
+    
+    for validator in enriched_validators:
+        withdrawal_creds = validator.get('withdrawal_credentials', '')
+        if withdrawal_creds and withdrawal_creds.lower().startswith('0x00'):
+            validators_0x00.append(validator)
+    
+    print(f"Found {len(validators_0x00):,} validators with 0x00 withdrawal credentials out of {total_validators:,} total validators")
+    print(f"Filtered out {total_validators - len(validators_0x00):,} validators")
+
+    # Convert filtered validators to DataFrame
+    df_filtered = pd.DataFrame(validators_0x00)
+    
+    # Save the filtered dataset
+    print(f"Saving filtered dataset to {first_output_file}")
+    df_filtered.to_csv(first_output_file, index=False)
+    
+    print(f"Processing complete! Saved {len(validators_0x00):,} validators to {first_output_file}")
+    
+    return validators_0x00
+
 def get_transaction_data(deposit_address, api_key):
     """
     Fetch transaction data and analyze for smart contract deployment
@@ -415,89 +521,150 @@ def fetch_transaction_data_with_analysis(unique_addresses, api_key, delay=0.25):
     
     return pd.DataFrame(results)
 
-# function call using modularized API key
-unique_results = fetch_transaction_data_with_analysis(unique_addresses.values, config.dune_sim_api_key, delay=config.api_delay)
+def main():
+    """Main execution function"""
+    try:
+        # Initialize configuration
+        config = Config()
+        
+        # File configuration
+        input_file = '0x00-validators.json'
+        first_output_file = 'enriched_validators_0x00.csv'
+        output_file = 'last_datapoint.csv'  # Changed to CSV format
+        
+        print("="*50)
+        print("VALIDATOR PROCESSING PIPELINE")
+        print("="*50)
+        
+        # Step 1: Process validators from JSON and filter for 0x00 withdrawal credentials
+        print("\n1. Processing validators and filtering for 0x00 withdrawal credentials...")
+        validators_0x00 = process_validators(input_file, first_output_file, config)
+        
+        if not validators_0x00:
+            print("No validators found with 0x00 withdrawal credentials. Exiting.")
+            return
+        
+        # Step 2: Convert to DataFrame for further processing
+        print("\n2. Converting to DataFrame for transaction analysis...")
+        df = pd.DataFrame(validators_0x00)
+        print(f"DataFrame shape: {df.shape}")
+        print(f"Columns: {list(df.columns)}")
+        
+        # Step 3: Extract unique deposit addresses
+        print("\n3. Extracting unique deposit addresses...")
+        unique_addresses = df['deposit_address'].drop_duplicates()
+        unique_df = pd.DataFrame({'deposit_address': unique_addresses.values})
+        print(f"Found {len(unique_addresses)} unique deposit addresses")
+        
+        # Step 4: Fetch transaction data from Dune Sim API
+        print("\n4. Fetching transaction data from Dune Sim API...")
+        unique_results = fetch_transaction_data_with_analysis(
+            unique_addresses.values, 
+            config.dune_sim_api_key, 
+            delay=config.api_delay
+        )
+        
+        # Step 5: Format timestamp data
+        print("\n5. Formatting timestamp data...")
+        unique_results['last_transaction_time'] = pd.to_datetime(
+            unique_results['last_transaction_time']
+        ).dt.strftime('%Y-%m-%d %H:%M')
+        
+        # Step 6: Check for DEX addresses
+        print("\n6. Checking for DEX addresses...")
+        dune = DuneClient(config.dune_client_api_key)
+        query_result = dune.get_latest_result(5644376)  # ethereum-dex-addresses
+        
+        # Extract the rows data from the query_result
+        rows_data = query_result.result.rows
+        dex_addresses = pd.DataFrame(rows_data)
+        
+        # Create the is_dex column
+        unique_results['is_dex'] = unique_results['deposit_address'].isin(dex_addresses['address'])
+        print(f"Found {unique_results['is_dex'].sum()} DEX addresses")
+        
+        # Step 7: Merge transaction data back to original DataFrame
+        print("\n7. Merging transaction data with validator data...")
+        df_with_transaction_data = df.merge(unique_results, on='deposit_address', how='left')
+        
+        # Step 8: Prepare final dataset
+        print("\n8. Preparing final dataset...")
+        csv_columns = [
+            'index', 
+            'pubkey', 
+            'status',  # Fixed: was 'state', should be 'status'
+            'withdrawal_credentials', 
+            'deposit_address', 
+            'last_transaction_time', 
+            'is_smart_contract', 
+            'is_dex'
+        ]
+        
+        # Check for missing columns
+        missing_columns = [col for col in csv_columns if col not in df_with_transaction_data.columns]
+        if missing_columns:
+            print(f"Warning: Missing columns in DataFrame: {missing_columns}")
+            print(f"Available columns: {list(df_with_transaction_data.columns)}")
+            # Add missing columns with default values
+            for col in missing_columns:
+                if col == 'status':
+                    df_with_transaction_data[col] = df_with_transaction_data.get('state', None)
+        
+        # Reorder DataFrame columns to match database schema
+        available_columns = [col for col in csv_columns if col in df_with_transaction_data.columns]
+        df_ordered = df_with_transaction_data[available_columns]
+        
+        # Step 9: Data type formatting
+        print("\n9. Formatting data types...")
+        
+        # Ensure index column is integer
+        if 'index' in df_ordered.columns:
+            df_ordered['index'] = pd.to_numeric(df_ordered['index'], errors='coerce').astype('Int64')
+            null_indices = df_ordered['index'].isna().sum()
+            if null_indices > 0:
+                print(f"Warning: {null_indices} rows have invalid index values")
+        
+        # Convert boolean columns
+        bool_columns = ['is_smart_contract', 'is_dex']
+        for col in bool_columns:
+            if col in df_ordered.columns:
+                df_ordered[col] = df_ordered[col].astype(bool)
+        
+        # Step 10: Save to CSV
+        print(f"\n10. Saving to CSV: {output_file}")
+        df_ordered.to_csv(output_file, index=False)
+        print(f"Saved {len(df_ordered)} records to {output_file}")
+        print(f"Columns: {list(df_ordered.columns)}")
+        
+        # Display sample data
+        print("\nFirst 3 rows of final data:")
+        print(df_ordered.head(3).to_string())
+        
+        # Step 11: Upload to Supabase
+        print(f"\n11. Uploading to Supabase...")
+        save_success = upload_csv_to_supabase(output_file, config)
+        
+        if save_success:
+            print("\n" + "="*50)
+            print("✓ PIPELINE COMPLETED SUCCESSFULLY!")
+            print(f"✓ Processed {len(validators_0x00)} validators")
+            print(f"✓ Analyzed {len(unique_addresses)} unique addresses")
+            print(f"✓ Saved to {output_file}")
+            print(f"✓ Uploaded to Supabase table: {config.table_name}")
+            print("="*50)
+        else:
+            print("\n" + "="*50)
+            print("⚠️ PIPELINE COMPLETED WITH WARNINGS")
+            print(f"✓ Data saved to {output_file}")
+            print("✗ Failed to upload to Supabase")
+            print("="*50)
+            
+    except Exception as e:
+        print(f"\n✗ PIPELINE FAILED: {e}")
+        print(f"✗ Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
 
-# Adjust the time format
-# First convert to datetime, then format
-unique_results['last_transaction_time'] = pd.to_datetime(unique_results['last_transaction_time']).dt.strftime('%Y-%m-%d %H:%M')
-
-# check if any address is a dex
-dune = DuneClient(config.dune_client_api_key)
-query_result = dune.get_latest_result(5644376)  # ethereum-dex-addresses
-
-# Extract the rows data from the query_result
-rows_data = query_result.result.rows
-
-# Create DataFrame from the rows
-dex_addresses = pd.DataFrame(rows_data)
-
-# Create the is_dex column by checking if deposit_address exists in dex_addresses
-unique_results['is_dex'] = unique_results['deposit_address'].isin(dex_addresses['address'])
-
-# Step 4: Merge back to original DataFrame
-df_with_transaction_data = df.merge(unique_results, on='deposit_address', how='left')
-
-# Ensure columns match the database schema exactly (excluding auto-generated columns)
-# The 'id' and 'created_at' columns are auto-generated, so we exclude them from CSV
-csv_columns = [
-    'index', 
-    'pubkey', 
-    'state', 
-    'withdrawal_credentials', 
-    'deposit_address', 
-    'last_transaction_time', 
-    'is_smart_contract', 
-    'is_dex'
-]
-
-# Check if all required columns exist in the DataFrame
-missing_columns = [col for col in csv_columns if col not in df_with_transaction_data.columns]
-if missing_columns:
-    print(f"Warning: Missing columns in DataFrame: {missing_columns}")
-    print(f"Available columns: {list(df_with_transaction_data.columns)}")
-
-# Reorder DataFrame columns to match database schema (excluding auto-generated columns)
-df_ordered = df_with_transaction_data[csv_columns]
-
-# Handle any data type issues before saving
-print("Checking data types...")
-print("DataFrame dtypes:")
-for col in df_ordered.columns:
-    print(f"  {col}: {df_ordered[col].dtype}")
-
-# Ensure index column is integer (handle any conversion issues)
-if 'index' in df_ordered.columns:
-    # Convert index to integer, replacing any non-numeric values with None
-    df_ordered['index'] = pd.to_numeric(df_ordered['index'], errors='coerce').astype('Int64')
-    
-    # Check for any failed conversions
-    null_indices = df_ordered['index'].isna().sum()
-    if null_indices > 0:
-        print(f"Warning: {null_indices} rows have invalid index values (converted to null)")
-
-# Convert boolean columns to proper boolean type
-bool_columns = ['is_smart_contract', 'is_dex']
-for col in bool_columns:
-    if col in df_ordered.columns:
-        df_ordered[col] = df_ordered[col].astype(bool)
-
-# Save to CSV with correct column order
-df_ordered.to_csv(output_file, index=False)
-print(f"Saved to {output_file} with columns: {list(df_ordered.columns)}")
-
-# Verify the first few rows to ensure data alignment
-print("\nFirst 3 rows of CSV data:")
-print(df_ordered.head(3))
-
-print(f"\nTotal rows in CSV: {len(df_ordered)}")
-
-
-print(f"Saved to {output_file}")
-
-# Save to Supabase using direct CSV upload
-save_success = upload_csv_to_supabase(output_file, config)
-if save_success:
-    print("Data successfully saved to Supabase!")
-else:
-    print("Failed to save data to Supabase.")
+# Run the main pipeline
+if __name__ == "__main__":
+    main()
