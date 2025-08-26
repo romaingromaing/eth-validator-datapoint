@@ -169,9 +169,9 @@ def start_analysis_subprocess():
         env = os.environ.copy()
         env['PYTHONUNBUFFERED'] = '1'
         
-        # Using the fixed script name from validator_analysis.py
+        # Use the fixed script name from the artifact
         process = subprocess.Popen(
-            [sys.executable, "-u", "validator_analysis.py"],
+            [sys.executable, "-u", "fixed_validator_analysis.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
@@ -243,7 +243,7 @@ def analysis_tab():
     """)
     
     # Check if required files exist
-    required_files = ["validator_analysis.py", "0x00-validators.json"]
+    required_files = ["fixed_validator_analysis.py", "0x00-validators.json"]
     missing_files = [f for f in required_files if not os.path.exists(f)]
     
     if missing_files:
@@ -645,6 +645,10 @@ def dashboard_tab():
     for col in preferred_columns:
         if col in filtered_df.columns:
             key_columns.append(col)
+    
+    # Ensure 'status' is always included if it exists in the dataframe
+    if 'status' in filtered_df.columns and 'status' not in key_columns:
+        key_columns.append('status')
     
     # If no preferred columns found, show all
     if not key_columns:
