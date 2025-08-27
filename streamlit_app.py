@@ -551,6 +551,18 @@ def dashboard_tab():
         ["All", "Active after Shapella (Apr 12, 2023)", "Active after Merge (Sep 15, 2022)"]
     )
     
+    # Add validator status filter
+    if 'status' in df.columns or 'state' in df.columns:
+        status_column = 'status' if 'status' in df.columns else 'state'
+        unique_statuses = sorted(df[status_column].unique().tolist())
+        
+        status_filter = st.sidebar.selectbox(
+            "Validator Status",
+            ["All"] + unique_statuses
+        )
+    else:
+        status_filter = "All"
+    
     # Apply activity filters
     filtered_df = df.copy()
     
@@ -561,6 +573,11 @@ def dashboard_tab():
         elif activity_filter == "Active after Merge (Sep 15, 2022)":
             merge_date = pd.Timestamp('2022-09-15')
             filtered_df = filtered_df[filtered_df['last_transaction_time'] > merge_date]
+    
+    # Apply status filter
+    if status_filter != "All" and ('status' in filtered_df.columns or 'state' in filtered_df.columns):
+        status_column = 'status' if 'status' in filtered_df.columns else 'state'
+        filtered_df = filtered_df[filtered_df[status_column] == status_filter]
     
     # Calculate validator status (active/inactive)
     if 'state' in filtered_df.columns:
