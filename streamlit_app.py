@@ -578,9 +578,9 @@ def dashboard_tab():
         if status_filter == "Active":
             filtered_df = filtered_df[filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting'])]
         elif status_filter == "Inactive":
-            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited_unslashed', 'exited_slashed'])]
+            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited', 'exited_unslashed', 'exited_slashed'])]
         elif status_filter == "Exited":
-            filtered_df = filtered_df[filtered_df[status_column].isin(['exited_unslashed', 'exited_slashed'])]
+            filtered_df = filtered_df[filtered_df[status_column].isin(['exited', 'exited_unslashed', 'exited_slashed'])]
     
     # Calculate validator status (active/inactive)
     if 'state' in filtered_df.columns:
