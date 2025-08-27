@@ -564,8 +564,8 @@ def dashboard_tab():
     
     # Calculate validator status (active/inactive)
     if 'state' in filtered_df.columns:
-        active_validators = len(filtered_df[filtered_df['state'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
-        inactive_validators = len(filtered_df[~filtered_df['state'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
+        active_validators = len(filtered_df[filtered_df['state'].isin(['active_online', 'exiting_online', 'active_exiting'])])
+        inactive_validators = len(filtered_df[~filtered_df['state'].isin(['active_offline', 'exited', 'slashed'])])
     else:
         # Fallback if status column doesn't exist
         active_validators = len(filtered_df)
