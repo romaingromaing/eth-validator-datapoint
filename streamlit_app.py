@@ -41,20 +41,8 @@ class Config:
         self.supabase_key = get_secret('SUPABASE_KEY')
         self.table_name = get_secret('SUPABASE_TABLE_NAME', 'validator_data')
         
-        # Validate required environment variables
-        if not self.supabase_url or not self.supabase_key:
-            st.error("Missing SUPABASE_URL or SUPABASE_KEY in configuration")
-            st.info("""
-            **For local development:** Make sure your `.env` file contains:
-            ```
-            SUPABASE_URL=your_supabase_url
-            SUPABASE_KEY=your_supabase_key
-            SUPABASE_DATABASE_URL=your_database_connection_string
-            ```
-            
-            **For Streamlit Cloud:** Add these to your app's Secrets in the dashboard.
-            """)
-            st.stop()
+        # Store validation status instead of stopping the app
+        self.is_valid = bool(self.supabase_url and self.supabase_key)
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def load_data_from_supabase():
@@ -65,6 +53,16 @@ def load_data_from_supabase():
         tuple: (pd.DataFrame, dict) - (Validator data, metadata)
     """
     config = Config()
+    
+    # Check if config is valid first
+    if not config.is_valid:
+        metadata = {
+            'table_name': config.table_name,
+            'record_count': 0,
+            'success': False,
+            'error': 'Missing SUPABASE_URL or SUPABASE_KEY in configuration'
+        }
+        return pd.DataFrame(), metadata
     
     try:
         # Initialize Supabase client
@@ -594,6 +592,22 @@ def dashboard_tab():
     with st.spinner("Loading data from Supabase..."):
         df, metadata = load_data_from_supabase()
     
+    # Check if we have configuration issues
+    config = Config()
+    if not config.is_valid:
+        st.error("⚠️ Missing SUPABASE_URL or SUPABASE_KEY in configuration")
+        st.info("""
+        **For local development:** Make sure your `.env` file contains:
+        ```
+        SUPABASE_URL=your_supabase_url
+        SUPABASE_KEY=your_supabase_key
+        SUPABASE_DATABASE_URL=your_database_connection_string
+        ```
+        
+        **For Streamlit Cloud:** Add these to your app's Secrets in the dashboard.
+        """)
+        return
+    
     # Get last refresh date
     last_refresh_dt, last_refresh_str = get_last_refresh_date(df)
     
@@ -631,7 +645,6 @@ def dashboard_tab():
         
         # Show debugging information
         with st.expander("Debug Information"):
-            config = Config()
             st.write("**Configuration:**")
             st.write(f"- URL: {config.supabase_url[:50]}..." if config.supabase_url else "- URL: Not set")
             st.write(f"- Key: {config.supabase_key[:20]}..." if config.supabase_key else "- Key: Not set") 
@@ -697,7 +710,7 @@ def dashboard_tab():
         if status_filter == "Active":
             filtered_df = filtered_df[filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting'])]
         elif status_filter == "Inactive":
-            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited_unslashed','exited', 'exited_slashed'])]
+            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited_unslashed', 'exited', 'exited_slashed'])]
         elif status_filter == "Exited":
             filtered_df = filtered_df[filtered_df[status_column].isin(['exited','exited_unslashed', 'exited_slashed'])]
     
