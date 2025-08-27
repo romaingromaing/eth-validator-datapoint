@@ -7,3 +7,4 @@ requests
 plotly
 numpy
 psycopg2-binary
+APScheduler==3.10.4
