@@ -349,7 +349,7 @@ def analysis_tab():
     
     # Add manual dashboard access button
     st.markdown("---")
-    if st.button("Go to Dashboard", use_container_width=True):
+    if st.button("Go to Dashboard", width='stretch'):
         # Clear cache and indicate dashboard should be viewed
         st.cache_data.clear()
         st.session_state.force_dashboard = True
@@ -380,7 +380,7 @@ def analysis_tab():
     
     with col1:
         start_disabled = (status == "running")
-        if st.button("Start Analysis", type="primary", use_container_width=True, disabled=start_disabled):
+        if st.button("Start Analysis", type="primary", width='stretch', disabled=start_disabled):
             # Clean up any existing process
             if st.session_state.analysis_process:
                 try:
@@ -417,7 +417,7 @@ def analysis_tab():
     
     with col2:
         stop_disabled = (status != "running")
-        if st.button("Stop Analysis", use_container_width=True, disabled=stop_disabled):
+        if st.button("Stop Analysis", width='stretch', disabled=stop_disabled):
             if st.session_state.analysis_process:
                 try:
                     st.session_state.analysis_process.terminate()
@@ -507,7 +507,7 @@ def analysis_tab():
         
         # Add dashboard button when analysis is complete
         st.markdown("---")
-        if st.button("View Dashboard", type="primary", use_container_width=True):
+        if st.button("View Dashboard", type="primary", width='stretch'):
             # Clear data cache to force refresh
             st.cache_data.clear()
             # Set flag to show dashboard message
@@ -628,7 +628,7 @@ def dashboard_tab():
     with col2:
         # Admin refresh button
         if has_admin_access:
-            if st.button("Refresh Data", use_container_width=True):
+            if st.button("Refresh Data", width='stretch'):
                 st.cache_data.clear()
                 st.success("Data refreshed!")
                 st.rerun()
@@ -820,7 +820,7 @@ def dashboard_tab():
             display_df = display_df.copy()
             display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
     
-    st.dataframe(display_df, use_container_width=True, height=400)
+    st.dataframe(display_df, width='stretch', height=400)
     
     # Download section
     csv = filtered_df.to_csv(index=False)
@@ -1047,28 +1047,28 @@ def scheduler_tab():
     
     with col1:
         if not scheduler.is_running:
-            if st.button("Start Scheduler", type="primary", use_container_width=True):
+            if st.button("Start Scheduler", type="primary", width='stretch'):
                 if scheduler.start_scheduler():
                     st.success("Scheduler started!")
                     st.rerun()
                 else:
                     st.error("Failed to start scheduler")
         else:
-            if st.button("Stop Scheduler", use_container_width=True):
+            if st.button("Stop Scheduler", width='stretch'):
                 scheduler.stop_scheduler()
                 st.success("Scheduler stopped!")
                 st.rerun()
     
     with col2:
         if scheduler.is_running:
-            if st.button("Manual Run", use_container_width=True):
+            if st.button("Manual Run", width='stretch'):
                 if scheduler.trigger_manual_run():
                     st.success("Manual analysis started!")
                 else:
                     st.error("Failed to start manual run")
     
     with col3:
-        if st.button("Refresh Status", use_container_width=True):
+        if st.button("Refresh Status", width='stretch'):
             st.rerun()
     
     # Status display
