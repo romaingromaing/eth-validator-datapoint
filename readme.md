@@ -1,298 +1,312 @@
+# Ethereum Validator Analysis Platform
+## Enterprise Data Engineering Pipeline & Analytics Dashboard
 
-# Ethereum Validator Analysis Dashboard
+A production-grade data engineering platform for comprehensive Ethereum validator analysis. This system implements automated ETL pipelines, multi-API data enrichment, secure role-based access control, and scheduled batch processing with an interactive analytics dashboard.
 
-A comprehensive data pipeline for analyzing Ethereum validators, their deposit addresses, transaction histories, and smart contract deployment activities. Features automated data enrichment through multiple APIs and a beautiful Streamlit dashboard for interactive analysis.
-
-## 🏗 Architecture Overview
+## Architecture Overview
 
 ```mermaid
 graph TB
-    subgraph "Data Sources"
-        BC[🔗 BeaconChain API<br/>Validator Data]
-        DA[📊 Dune Analytics API<br/>Transaction History]
-        DEX[🏪 Dune DEX Query<br/>DEX Addresses]
+    subgraph "Data Ingestion Layer"
+        BC[BeaconChain API<br/>Validator Metadata]
+        DA[Dune Analytics Sim API<br/>Transaction Analysis]
+        DEX[Dune Analytics Client<br/>DEX Address Registry]
     end
     
-    subgraph "Processing Layer"
-        PS[🐍 Python Pipeline<br/>validator_analysis.py]
+    subgraph "Data Processing Engine"
+        PS[Python ETL Pipeline<br/>validator_analysis.py]
+        SCH[APScheduler<br/>Automated Jobs]
     end
     
-    subgraph "Storage Layer"
-        PG[(🐘 Supabase<br/>PostgreSQL)]
-        CSV[📄 CSV Export<br/>dune.csv]
+    subgraph "Data Warehouse"
+        PG[(Supabase PostgreSQL<br/>Production Database)]
+        CSV[CSV Export Layer<br/>Data Lake Output]
     end
     
-    subgraph "Presentation Layer"
-        ST[🎨 Streamlit Dashboard<br/>Interactive Frontend]
+    subgraph "Analytics & Access Layer"
+        ADMIN[Admin Panel<br/>Full Access Dashboard]
+        READ[Read-Only Dashboard<br/>Public Analytics]
+        AUTH[Access Control System<br/>Role-Based Security]
     end
     
     BC --> PS
     DA --> PS
     DEX --> PS
+    SCH --> PS
     PS --> PG
     PS --> CSV
-    PG --> ST
+    PG --> ADMIN
+    PG --> READ
+    AUTH --> ADMIN
+    AUTH --> READ
     
-    classDef api fill:#e1f5fe,stroke:#01579b,stroke-width:2px
-    classDef processing fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
-    classDef storage fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
-    classDef frontend fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef ingestion fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef processing fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
+    classDef storage fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef frontend fill:#fff8e1,stroke:#f57c00,stroke-width:2px
     
-    class BC,DA,DEX api
-    class PS processing
+    class BC,DA,DEX ingestion
+    class PS,SCH processing
     class PG,CSV storage
-    class ST frontend
+    class ADMIN,READ,AUTH frontend
 ```
 
-## 🚀 Features
+## Key Features
 
-### Data Processing
-- **Validator Enrichment**: Fetches deposit addresses for Ethereum validators using BeaconChain API
-- **Transaction Analysis**: Analyzes transaction histories using Dune Analytics Sim API
-- **Smart Contract Detection**: Automatically identifies addresses that have deployed smart contracts
-- **DEX Address Identification**: Cross-references addresses with known DEX addresses from Dune Analytics
-- **Batch Processing**: Handles large datasets efficiently with configurable batch sizes and rate limiting
+### Data Engineering Pipeline
+- **Multi-Source ETL**: Orchestrates data ingestion from BeaconChain API, Dune Analytics, and custom DEX registries
+- **Smart Contract Detection**: Advanced transaction analysis to identify contract deployment activities
+- **Batch Processing Architecture**: Configurable batch sizes with intelligent rate limiting and error recovery
+- **Data Quality Assurance**: Comprehensive validation, deduplication, and enrichment processes
+- **Automated Scheduling**: Production-ready cron jobs with APScheduler for monthly data refreshes
 
-### Interactive Dashboard
-- **Real-time Filtering**: Filter validators by smart contract deployment status, DEX status, and date ranges
-- **Interactive Visualizations**: Pie charts for distribution analysis and timeline charts for transaction activity
-- **Data Export**: Download filtered results as CSV files
-- **Auto-refresh**: Cached data with manual refresh capabilities
-- **Responsive Design**: Modern, mobile-friendly interface
+### Enterprise Security & Access Control
+- **Role-Based Access Control (RBAC)**: Secure admin authentication with password-based access
+- **Admin Panel**: Full-featured management interface with data refresh, analysis triggers, and system monitoring
+- **Read-Only Dashboard**: Public analytics interface for stakeholder access without system privileges
+- **Environment-Based Security**: Secure credential management with multi-tier configuration support
 
-### Data Storage
-- **Multiple Output Formats**: Saves data to both CSV files and Supabase database
-- **Overwrite Mode**: Fresh data completely replaces existing records on each run
-- **Secure Configuration**: Environment variable-based API key management
+### Analytics Dashboard
+- **Interactive Filtering**: Multi-dimensional data slicing by validator status, smart contract activity, and DEX classification
+- **Real-Time Metrics**: Live dashboard with validator status tracking and deposit address analytics
+- **Data Visualization**: Distribution analysis, timeline charts, and comprehensive KPI monitoring
+- **Export Capabilities**: Filtered CSV exports with timestamp-based file naming
 
-## 📊 Screenshots
+### Automated Operations
+- **Scheduled Processing**: Monthly automated data pipeline execution via integrated cron scheduler
+- **Manual Triggers**: On-demand analysis execution with real-time progress monitoring
+- **Run History**: Comprehensive logging and status tracking for all automated and manual executions
+- **Error Handling**: Robust exception handling with timeout protection and failure notifications
 
-*Dashboard Overview*
-- Real-time metrics and filtering options
-- Interactive charts showing validator distributions
-- Transaction timeline analysis
+## Data Engineering Architecture
 
-## 🛠 Installation
+### ETL Pipeline Components
+
+1. **Extract Phase**
+   - BeaconChain API integration for validator metadata
+   - Dune Analytics Sim API for transaction history analysis  
+   - Dune Analytics Client for DEX address registry synchronization
+
+2. **Transform Phase**
+   - Deposit address enrichment and validation
+   - Smart contract deployment detection algorithms
+   - DEX address classification and cross-referencing
+   - Data normalization and quality checks
+
+3. **Load Phase**
+   - PostgreSQL database upserts with conflict resolution
+   - CSV data lake exports for downstream analysis
+   - Real-time dashboard cache invalidation
+
+### Scheduler Integration
+
+```python
+# Automated monthly execution
+ENABLE_AUTO_ANALYSIS=true
+CRON_DAY=1          # First day of month
+CRON_HOUR=2         # 2 AM UTC execution
+CRON_MINUTE=0       # Top of the hour
+```
+
+## Installation & Configuration
 
 ### Prerequisites
 - Python 3.8+
-- Supabase account
-- Dune Analytics API access
+- Supabase PostgreSQL instance
+- Dune Analytics API credentials
+- Production environment variables
 
-### Quick Start
+### Environment Setup
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/0xhaisenberg/eth-validator-analysis.git
-   cd eth-validator-analysis
-   ```
+```bash
+# Clone repository
+git clone https://github.com/0xhaisenberg/eth-validator-analysis.git
+cd eth-validator-analysis
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Set up environment variables**
-   
-   Create a `.env` file in the project root:
-   ```env
-   # Dune API Keys
-   DUNE_SIM_API_KEY=your_dune_sim_api_key_here
-   DUNE_CLIENT_API_KEY=your_dune_client_api_key_here
-   
-   # Supabase Configuration
-   SUPABASE_URL=https://your-project-id.supabase.co
-   SUPABASE_KEY=your_supabase_anon_key_here
-   SUPABASE_TABLE_NAME=validator_data
-   
-   # Optional Configuration
-   BATCH_SIZE=100
-   DELAY_SECONDS=15
-   API_DELAY=0.25
-   ```
-
-4. **Set up Supabase database**
-   
-   Execute this SQL in your Supabase SQL Editor:
-   ```sql
-   -- Create the validator_data table
-   CREATE TABLE validator_data (
-       id BIGSERIAL PRIMARY KEY,
-       index INTEGER,
-       pubkey TEXT,
-       deposit_address TEXT,
-       last_transaction_time TIMESTAMPTZ,
-       is_smart_contract BOOLEAN DEFAULT FALSE,
-       is_dex BOOLEAN DEFAULT FALSE,
-       created_at TIMESTAMPTZ DEFAULT NOW()
-   );
-   
-   -- Create indexes for better query performance
-   CREATE INDEX idx_deposit_address ON validator_data(deposit_address);
-   CREATE INDEX idx_is_smart_contract ON validator_data(is_smart_contract);
-   CREATE INDEX idx_is_dex ON validator_data(is_dex);
-   CREATE INDEX idx_last_transaction_time ON validator_data(last_transaction_time);
-   ```
-
-5. **Run the data processing pipeline**
-   ```bash
-   python validator_analysis.py
-   ```
-
-6. **Launch the dashboard**
-   ```bash
-   streamlit run streamlit_app.py
-   ```
-
-## 📁 Project Structure
-
-```
-eth-validator-analysis/
-├── validator_analysis.py      # Main data processing pipeline
-├── streamlit_app.py          # Interactive dashboard
-├── requirements.txt          # Python dependencies
-├── .env                     # Environment variables (create this)
-├── .env.example             # Example environment file
-├── .gitignore              # Git ignore file
-├── README.md               # This file
-├── 0x00-validators.json    # Input validator data (JSON)
-└── dune.csv               # Output CSV file
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-## 🔧 Configuration
+### Production Configuration
 
-### Environment Variables
+Create `.env` file with production credentials:
+```env
+# API Credentials
+DUNE_SIM_API_KEY=your_dune_sim_key
+DUNE_CLIENT_API_KEY=your_dune_client_key
 
-| Variable | Required | Description | Default |
-|----------|----------|-------------|---------|
-| `DUNE_SIM_API_KEY` | Yes | Dune Analytics Sim API key | - |
-| `DUNE_CLIENT_API_KEY` | Yes | Dune Analytics Client API key | - |
-| `SUPABASE_URL` | Yes | Your Supabase project URL | - |
-| `SUPABASE_KEY` | Yes | Your Supabase anon key | - |
-| `SUPABASE_TABLE_NAME` | No | Database table name | `validator_data` |
-| `BATCH_SIZE` | No | API batch processing size | `100` |
-| `DELAY_SECONDS` | No | Delay between batches (seconds) | `15` |
-| `API_DELAY` | No | Delay between API calls (seconds) | `0.25` |
+# Database Configuration
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_supabase_anon_key
+SUPABASE_DATABASE_URL=postgresql://user:pass@host:5432/db
+SUPABASE_TABLE_NAME=validator_data
 
-### Input Data Format
+# Access Control
+ADMIN_PASSWORD=your_secure_admin_password
+RESTRICT_ADMIN_ACCESS=true
 
-The pipeline expects a JSON file (`0x00-validators.json`) with validator data:
-```json
-[
-  {
-    "index": 1,
-    "pubkey": "0x123...",
-    "status": "active"
-  }
-]
+# Automation Settings
+ENABLE_AUTO_ANALYSIS=true
+CRON_DAY=1
+CRON_HOUR=2
+CRON_MINUTE=0
+
+# Performance Tuning
+BATCH_SIZE=100
+DELAY_SECONDS=15
+API_DELAY=0.25
 ```
 
-## 🚀 Usage
+### Database Schema
 
-### Data Processing Pipeline
+```sql
+-- Production database schema
+CREATE TABLE validator_data (
+    id BIGSERIAL PRIMARY KEY,
+    index INTEGER NOT NULL,
+    pubkey TEXT NOT NULL,
+    deposit_address TEXT,
+    last_transaction_time TIMESTAMPTZ,
+    is_smart_contract BOOLEAN DEFAULT FALSE,
+    is_dex BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-The main script processes validator data through several enrichment steps:
+-- Performance indexes
+CREATE INDEX idx_validator_deposit ON validator_data(deposit_address);
+CREATE INDEX idx_validator_contract ON validator_data(is_smart_contract);
+CREATE INDEX idx_validator_dex ON validator_data(is_dex);
+CREATE INDEX idx_validator_activity ON validator_data(last_transaction_time);
+CREATE INDEX idx_validator_created ON validator_data(created_at);
+```
 
-1. **Load Validators**: Reads validator data from JSON input file
-2. **Fetch Deposit Addresses**: Uses BeaconChain API to get deposit addresses
-3. **Analyze Transactions**: Uses Dune Sim API to analyze transaction history
-4. **Detect Smart Contracts**: Identifies addresses that have deployed contracts
-5. **Check DEX Addresses**: Cross-references with known DEX addresses
-6. **Save Results**: Outputs to both CSV and Supabase database
+## Production Deployment
 
-### Dashboard Features
+### Manual Execution
+```bash
+# Run ETL pipeline
+python validator_analysis.py
 
-#### Filtering Options
-- **Smart Contract Status**: Filter by contract deployment activity
-- **DEX Status**: Filter by DEX address classification
-- **Date Range**: Filter by last transaction date
+# Launch dashboard
+streamlit run streamlit_app.py
+```
 
-#### Visualizations
-- **Distribution Charts**: Pie charts showing validator categorization
-- **Timeline Analysis**: Transaction activity over time
-- **Metrics Dashboard**: Key statistics and counts
+### Automated Scheduling
+The platform includes built-in scheduling capabilities:
+- Monthly automated data pipeline execution
+- Configurable execution timing (day/hour/minute)
+- Manual trigger capabilities for ad-hoc analysis
+- Comprehensive run history and status monitoring
 
-#### Data Export
-- Export filtered results as CSV
-- Real-time data refresh from Supabase
-- Configurable column visibility
+## Access Control System
 
-## 🔍 API Integrations
+### Admin Panel Features
+- Full data refresh capabilities
+- Manual analysis trigger with real-time progress monitoring
+- Scheduler management (start/stop/configure)
+- System status monitoring and run history
+- Complete database access and export functionality
 
-### BeaconChain API
-- **Endpoint**: `https://beaconcha.in/api/v1/validator/{pubkeys}/deposits`
-- **Purpose**: Fetches deposit addresses for validator public keys
-- **Rate Limiting**: Built-in delays between batch requests
+### Read-Only Dashboard
+- Comprehensive validator analytics without system access
+- Interactive filtering and visualization
+- Data export capabilities
+- Real-time metrics and KPI monitoring
+- No administrative functions or data modification capabilities
 
-### Dune Analytics Sim API
-- **Endpoint**: `https://api.sim.dune.com/v1/evm/transactions/{address}`
-- **Purpose**: Analyzes transaction history and smart contract deployments
-- **Features**: Transaction analysis, contract deployment detection
+## Data Schema & Analytics
 
-### Dune Analytics Client
-- **Purpose**: Fetches known DEX addresses from curated query
-- **Query ID**: 5644376 (ethereum-dex-addresses)
+### Core Metrics Tracked
+- **Validator Status**: Active/inactive validator distribution
+- **Deposit Address Analysis**: Unique addresses with source classification
+- **Smart Contract Activity**: Contract deployment identification and tracking  
+- **DEX Integration**: Known DEX address classification and analysis
+- **Transaction Timeline**: Historical activity patterns and trends
 
-## 📈 Data Schema
+### Analytics Capabilities
+- Multi-dimensional filtering across all validator attributes
+- Time-series analysis of validator activity patterns
+- Distribution analysis of deposit sources (wallet/contract/DEX)
+- Export functionality for downstream analysis and reporting
 
-### Validator Data Fields
+## API Integration Architecture
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | BIGSERIAL | Primary key (auto-generated) |
-| `index` | INTEGER | Validator index |
-| `pubkey` | TEXT | Validator public key |
-| `deposit_address` | TEXT | Ethereum address used for staking deposit |
-| `last_transaction_time` | TIMESTAMPTZ | Most recent transaction timestamp |
-| `is_smart_contract` | BOOLEAN | Whether address deployed a smart contract |
-| `is_dex` | BOOLEAN | Whether address is a known DEX address |
-| `created_at` | TIMESTAMPTZ | Record creation timestamp |
+### BeaconChain API Integration
+- Validator metadata and deposit address enrichment
+- Batch processing with intelligent rate limiting
+- Error recovery and retry logic
 
-## 🔒 Security
+### Dune Analytics Integration
+- **Sim API**: Transaction history analysis and smart contract detection
+- **Client API**: DEX address registry synchronization
+- Configurable query execution with timeout handling
 
-### Environment Variables
-- All API keys stored in `.env` file (never committed to git)
-- Environment variable validation on startup
-- Secure Supabase connection with anon keys
+## Security & Compliance
 
-### Best Practices
-- Add `.env` to `.gitignore`
-- Use read-only API keys where possible
-- Rotate API keys regularly
-- Use different environment files for different stages
+### Access Control
+- Environment-based credential management
+- Role-based dashboard access with secure authentication
+- Admin panel protection with configurable access restrictions
 
-## 🤝 Contributing
+### Data Protection
+- Secure API key management
+- Database connection encryption
+- No sensitive data exposure in logs or exports
 
-1. **Fork the repository**
-2. **Create a feature branch**
-   ```bash
-   git checkout -b feature/amazing-feature
-   ```
-3. **Commit your changes**
-   ```bash
-   git commit -m 'Add some amazing feature'
-   ```
-4. **Push to the branch**
-   ```bash
-   git push origin feature/amazing-feature
-   ```
-5. **Open a Pull Request**
+## Monitoring & Operations
+
+### Scheduler Monitoring
+- Real-time job status tracking
+- Historical run analysis with success/failure rates
+- Manual intervention capabilities
+- Comprehensive error logging and alerting
+
+### Performance Metrics
+- Batch processing performance monitoring
+- API rate limit compliance tracking
+- Database operation performance analysis
+- Dashboard response time optimization
+
+## Contributing
 
 ### Development Setup
-
 ```bash
 # Install development dependencies
 pip install -r requirements.txt
 
-# Run tests
-python -m pytest tests/
+# Run data pipeline
+python validator_analysis.py
 
-# Format code
-black validator_analysis.py streamlit_app.py
-
-# Lint code
-flake8 validator_analysis.py streamlit_app.py
+# Launch development dashboard
+streamlit run streamlit_app.py
 ```
+
+### Code Quality Standards
+- Comprehensive error handling and logging
+- Type hints and documentation
+- Environment-based configuration management
+- Secure credential handling
+
+## Production Considerations
+
+### Scalability
+- Configurable batch processing for large datasets
+- Database connection pooling and optimization
+- Efficient API rate limit management
+- Streamlined data pipeline with minimal resource usage
+
+### Reliability
+- Comprehensive error handling with graceful degradation
+- Automated retry logic for transient failures
+- Data consistency checks and validation
+- Robust scheduler with failure recovery
+
+### Monitoring
+- Detailed logging for all pipeline operations
+- Performance metrics collection and analysis
+- Alert system for critical failures
+- Comprehensive audit trail for all administrative actions
 
 ## 📝 License
 
@@ -305,16 +319,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Supabase](https://supabase.com) for database services
 - [Streamlit](https://streamlit.io) for the dashboard framework
 
-## 📧 Support
+## Support
 
-If you have any questions or run into issues:
-
-1. **Check the [Issues](https://github.com/0xhaisenberg/eth-validator-analysis/issues)** page
-2. **Create a new issue** with detailed information
-3. **Join the discussion** in existing issues
-
----
+For technical issues, feature requests, or deployment assistance, please create an issue in the GitHub repository with detailed system information and error logs.
 
 ⭐ **Star this repo** if you find it useful!
-
-Made with ❤️ by [0xhaisenberg](https://github.com/0xhaisenberg)
