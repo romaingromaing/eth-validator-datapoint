@@ -584,7 +584,6 @@ def dashboard_tab():
     Dashboard functionality with refresh button and last refresh date
     """
     st.header("Validator Analysis Dashboard")
-    st.write("DEBUG: Dashboard loading...")  # Remove after testing -------------------------------------------------------------------
     
     # Check admin access using session state (no duplicate widgets)
     has_admin_access = st.session_state.get('admin_authenticated', False)
@@ -656,11 +655,6 @@ def dashboard_tab():
     
     if df.empty:
         st.warning("No data available. Please run the validator analysis first or check your Supabase connection.")
-
-    if df.empty:
-        st.warning("No data available. Please run the validator analysis first or check your Supabase connection.")
-        # ... troubleshooting section ...
-        return df # <-- This return might be causing the blank screen
         
         # Show connection help
         with st.expander("Troubleshooting"):
@@ -770,6 +764,21 @@ def dashboard_tab():
     with col3:
         st.metric("Inactive Validators", inactive_validators)
 
+    # Deposit Address Score Cards (4 cards)
+    st.subheader("Deposit Addresses")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Unique Addresses", unique_deposit_addresses)
+    
+    with col2:
+        st.metric("From Wallet", from_wallet)
+    
+    with col3:
+        st.metric("From Smart Contract", from_smart_contract)
+    
+    with col4:
+        st.metric("From DEX", from_dex)
     
     st.markdown("---")
     
@@ -829,6 +838,9 @@ def main():
     
     st.title("Validator Analysis Platform")
     
+    # Initialize admin authentication in main (so it's always visible)
+    has_admin_access = initialize_admin_auth()
+    
     # Show message if user clicked dashboard button
     if 'force_dashboard' in st.session_state and st.session_state.force_dashboard:
         st.info("**Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
@@ -842,6 +854,7 @@ def main():
     
     with tab2:
         dashboard_tab()
+
 
 if __name__ == "__main__":
     main()
