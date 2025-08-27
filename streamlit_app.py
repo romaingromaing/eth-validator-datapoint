@@ -553,12 +553,9 @@ def dashboard_tab():
     
     # Add validator status filter
     if 'status' in df.columns or 'state' in df.columns:
-        status_column = 'status' if 'status' in df.columns else 'state'
-        unique_statuses = sorted(df[status_column].unique().tolist())
-        
         status_filter = st.sidebar.selectbox(
             "Validator Status",
-            ["All"] + unique_statuses
+            ["All", "Active", "Inactive", "Exited"]
         )
     else:
         status_filter = "All"
@@ -577,7 +574,13 @@ def dashboard_tab():
     # Apply status filter
     if status_filter != "All" and ('status' in filtered_df.columns or 'state' in filtered_df.columns):
         status_column = 'status' if 'status' in filtered_df.columns else 'state'
-        filtered_df = filtered_df[filtered_df[status_column] == status_filter]
+        
+        if status_filter == "Active":
+            filtered_df = filtered_df[filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting'])]
+        elif status_filter == "Inactive":
+            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited_unslashed', 'exited_slashed'])]
+        elif status_filter == "Exited":
+            filtered_df = filtered_df[filtered_df[status_column].isin(['exited_unslashed', 'exited_slashed'])]
     
     # Calculate validator status (active/inactive)
     if 'state' in filtered_df.columns:
