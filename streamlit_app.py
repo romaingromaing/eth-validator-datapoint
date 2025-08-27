@@ -584,6 +584,7 @@ def dashboard_tab():
     Dashboard functionality with refresh button and last refresh date
     """
     st.header("Validator Analysis Dashboard")
+    st.write("DEBUG: Dashboard loading...")  # Remove after testing -------------------------------------------------------------------
     
     # Check admin access using session state (no duplicate widgets)
     has_admin_access = st.session_state.get('admin_authenticated', False)
@@ -594,6 +595,7 @@ def dashboard_tab():
     
     # Check if we have configuration issues
     config = Config()
+
     if not config.is_valid:
         st.error("⚠️ Missing SUPABASE_URL or SUPABASE_KEY in configuration")
         st.info("""
@@ -654,6 +656,11 @@ def dashboard_tab():
     
     if df.empty:
         st.warning("No data available. Please run the validator analysis first or check your Supabase connection.")
+
+    if df.empty:
+        st.warning("No data available. Please run the validator analysis first or check your Supabase connection.")
+        # ... troubleshooting section ...
+        return df # <-- This return might be causing the blank screen
         
         # Show connection help
         with st.expander("Troubleshooting"):
@@ -762,3 +769,79 @@ def dashboard_tab():
     
     with col3:
         st.metric("Inactive Validators", inactive_validators)
+
+    
+    st.markdown("---")
+    
+    # Data table
+    st.subheader("Validator Data")
+    
+    # Show available columns
+    available_columns = list(filtered_df.columns)
+    st.caption(f"Available columns: {', '.join(available_columns)}")
+    
+    # Show key columns by default if they exist
+    key_columns = []
+    preferred_columns = ['index', 'pubkey', 'status', 'deposit_address', 'last_transaction_time', 'is_smart_contract', 'is_dex']
+    
+    for col in preferred_columns:
+        if col in filtered_df.columns:
+            key_columns.append(col)
+    
+    # Handle both 'status' and 'state' column names (fallback for different API responses)
+    if 'status' not in key_columns:
+        if 'state' in filtered_df.columns:
+            key_columns.insert(2, 'state')  # Insert at position where 'status' would be
+        elif 'status' in filtered_df.columns:
+            key_columns.insert(2, 'status')
+    
+    # If no preferred columns found, show all
+    if not key_columns:
+        key_columns = available_columns
+    
+    display_df = filtered_df[key_columns] if key_columns else filtered_df
+    
+    # Format datetime columns
+    datetime_columns = ['last_transaction_time', 'created_at', 'updated_at']
+    for col in datetime_columns:
+        if col in display_df.columns:
+            display_df = display_df.copy()
+            display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
+    
+    st.dataframe(display_df, use_container_width=True, height=400)
+    
+    # Download section
+    csv = filtered_df.to_csv(index=False)
+    st.download_button(
+        label="Download as CSV",
+        data=csv,
+        file_name=f"validator_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv"
+    )
+
+def main():
+    st.set_page_config(
+        page_title="Validator Analysis Dashboard",
+        page_icon="🔍",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    st.title("Validator Analysis Platform")
+    
+    # Show message if user clicked dashboard button
+    if 'force_dashboard' in st.session_state and st.session_state.force_dashboard:
+        st.info("**Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
+        st.session_state.force_dashboard = False
+    
+    # Create tabs
+    tab1, tab2 = st.tabs(["Run Analysis", "Dashboard"])
+    
+    with tab1:
+        analysis_tab()
+    
+    with tab2:
+        dashboard_tab()
+
+if __name__ == "__main__":
+    main()
