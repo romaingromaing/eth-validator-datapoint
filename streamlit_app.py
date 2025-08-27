@@ -11,6 +11,9 @@ import threading
 import queue
 import time
 import json
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import atexit
 
 # Load environment variables from .env file
 load_dotenv()
@@ -828,6 +831,303 @@ def dashboard_tab():
         mime="text/csv"
     )
 
+class SchedulerManager:
+    def __init__(self):
+        self.scheduler = None
+        self.is_running = False
+    
+    def get_secret(self, key, default=None):
+        """Helper to get secrets from Streamlit or environment"""
+        try:
+            if hasattr(st, 'secrets') and st.secrets is not None:
+                return st.secrets.get(key, default)
+        except Exception:
+            pass
+        return os.getenv(key, default)
+    
+    def should_enable_scheduler(self):
+        """Check if scheduler should be enabled based on configuration"""
+        enable_scheduler = self.get_secret('ENABLE_AUTO_ANALYSIS', 'false').lower() == 'true'
+        has_required_vars = all([
+            self.get_secret('SUPABASE_URL'),
+            self.get_secret('SUPABASE_KEY'),
+            self.get_secret('DUNE_SIM_API_KEY'),
+            self.get_secret('DUNE_CLIENT_API_KEY')
+        ])
+        return enable_scheduler and has_required_vars
+    
+    def run_scheduled_analysis(self):
+        """Run the analysis in background"""
+        try:
+            # Log the scheduled run
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Store the run status
+            if 'scheduled_runs' not in st.session_state:
+                st.session_state.scheduled_runs = []
+            
+            run_info = {
+                'timestamp': timestamp,
+                'status': 'started'
+            }
+            
+            # Start the analysis subprocess
+            import subprocess
+            import sys
+            
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+            env['SCHEDULED_RUN'] = 'true'  # Flag to indicate this is a scheduled run
+            
+            process = subprocess.Popen(
+                [sys.executable, "-u", "validator_analysis.py"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                env=env,
+                cwd=os.getcwd()
+            )
+            
+            # Wait for completion (with timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=3600)  # 1 hour timeout
+                if process.returncode == 0:
+                    run_info['status'] = 'completed'
+                    run_info['message'] = 'Analysis completed successfully'
+                else:
+                    run_info['status'] = 'failed'
+                    run_info['message'] = f'Analysis failed with code {process.returncode}'
+            except subprocess.TimeoutExpired:
+                process.kill()
+                run_info['status'] = 'timeout'
+                run_info['message'] = 'Analysis timed out after 1 hour'
+            
+            # Store the result
+            st.session_state.scheduled_runs.append(run_info)
+            
+            # Keep only last 10 runs
+            if len(st.session_state.scheduled_runs) > 10:
+                st.session_state.scheduled_runs = st.session_state.scheduled_runs[-10:]
+                
+        except Exception as e:
+            run_info['status'] = 'error'
+            run_info['message'] = f'Error: {str(e)}'
+            if 'scheduled_runs' not in st.session_state:
+                st.session_state.scheduled_runs = []
+            st.session_state.scheduled_runs.append(run_info)
+    
+    def start_scheduler(self):
+        """Start the background scheduler"""
+        if not self.should_enable_scheduler():
+            return False
+        
+        if self.scheduler is None:
+            self.scheduler = BackgroundScheduler()
+            
+            # Get cron settings from configuration
+            cron_day = int(self.get_secret('CRON_DAY', '1'))  # 1st of month
+            cron_hour = int(self.get_secret('CRON_HOUR', '2'))  # 2 AM
+            cron_minute = int(self.get_secret('CRON_MINUTE', '0'))  # 0 minutes
+            
+            # Add monthly job
+            self.scheduler.add_job(
+                func=self.run_scheduled_analysis,
+                trigger=CronTrigger(
+                    day=cron_day,
+                    hour=cron_hour, 
+                    minute=cron_minute
+                ),
+                id='monthly_analysis',
+                name='Monthly Validator Analysis',
+                replace_existing=True
+            )
+            
+            self.scheduler.start()
+            self.is_running = True
+            
+            # Register cleanup
+            atexit.register(lambda: self.scheduler.shutdown() if self.scheduler else None)
+        
+        return True
+    
+    def stop_scheduler(self):
+        """Stop the scheduler"""
+        if self.scheduler and self.is_running:
+            self.scheduler.shutdown()
+            self.scheduler = None
+            self.is_running = False
+    
+    def get_next_run_time(self):
+        """Get the next scheduled run time"""
+        if self.scheduler and self.is_running:
+            jobs = self.scheduler.get_jobs()
+            if jobs:
+                return jobs[0].next_run_time
+        return None
+    
+    def trigger_manual_run(self):
+        """Manually trigger a scheduled analysis"""
+        if self.should_enable_scheduler():
+            # Run in a separate thread to avoid blocking
+            thread = threading.Thread(target=self.run_scheduled_analysis, daemon=True)
+            thread.start()
+            return True
+        return False
+
+# Global scheduler instance
+if 'scheduler_manager' not in st.session_state:
+    st.session_state.scheduler_manager = SchedulerManager()
+
+def scheduler_tab():
+    """
+    New tab for managing the automated scheduler
+    """
+    st.header("Automated Scheduler")
+    
+    scheduler = st.session_state.scheduler_manager
+    
+    # Check admin access
+    has_admin_access = st.session_state.get('admin_authenticated', False)
+    
+    if not has_admin_access:
+        st.warning("🔒 Admin access required to manage scheduler")
+        st.info("Please login in the sidebar for access.")
+        return
+    
+    # Configuration section
+    st.subheader("Configuration")
+    
+    # Check if scheduler can be enabled
+    can_enable = scheduler.should_enable_scheduler()
+    
+    if not can_enable:
+        missing_items = []
+        if not scheduler.get_secret('ENABLE_AUTO_ANALYSIS') == 'true':
+            missing_items.append("ENABLE_AUTO_ANALYSIS=true")
+        
+        required_vars = ['SUPABASE_URL', 'SUPABASE_KEY', 'DUNE_SIM_API_KEY', 'DUNE_CLIENT_API_KEY']
+        for var in required_vars:
+            if not scheduler.get_secret(var):
+                missing_items.append(var)
+        
+        st.error("❌ Scheduler cannot be enabled. Missing configuration:")
+        for item in missing_items:
+            st.write(f"- {item}")
+        
+        with st.expander("Configuration Guide"):
+            st.markdown("""
+            **Required Environment Variables/Secrets:**
+            ```
+            ENABLE_AUTO_ANALYSIS=true
+            CRON_DAY=1          # Day of month (1-28, default: 1)
+            CRON_HOUR=2         # Hour (0-23, default: 2 AM)
+            CRON_MINUTE=0       # Minute (0-59, default: 0)
+            
+            # Plus all existing API keys:
+            DUNE_SIM_API_KEY=your_key
+            DUNE_CLIENT_API_KEY=your_key
+            SUPABASE_URL=your_url
+            SUPABASE_KEY=your_key
+            ```
+            """)
+        return
+    
+    # Scheduler status
+    st.success("✅ Scheduler configuration is valid")
+    
+    # Current settings
+    cron_day = scheduler.get_secret('CRON_DAY', '1')
+    cron_hour = scheduler.get_secret('CRON_HOUR', '2')
+    cron_minute = scheduler.get_secret('CRON_MINUTE', '0')
+    
+    st.info(f"📅 **Schedule:** Monthly on day {cron_day} at {cron_hour}:{cron_minute:0>2}")
+    
+    # Control buttons
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if not scheduler.is_running:
+            if st.button("Start Scheduler", type="primary", use_container_width=True):
+                if scheduler.start_scheduler():
+                    st.success("Scheduler started!")
+                    st.rerun()
+                else:
+                    st.error("Failed to start scheduler")
+        else:
+            if st.button("Stop Scheduler", use_container_width=True):
+                scheduler.stop_scheduler()
+                st.success("Scheduler stopped!")
+                st.rerun()
+    
+    with col2:
+        if scheduler.is_running:
+            if st.button("Manual Run", use_container_width=True):
+                if scheduler.trigger_manual_run():
+                    st.success("Manual analysis started!")
+                else:
+                    st.error("Failed to start manual run")
+    
+    with col3:
+        if st.button("Refresh Status", use_container_width=True):
+            st.rerun()
+    
+    # Status display
+    st.markdown("---")
+    st.subheader("Status")
+    
+    if scheduler.is_running:
+        st.success("🟢 Scheduler is running")
+        
+        next_run = scheduler.get_next_run_time()
+        if next_run:
+            st.info(f"⏰ **Next run:** {next_run.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    else:
+        st.error("🔴 Scheduler is stopped")
+    
+    # Recent runs
+    if 'scheduled_runs' in st.session_state and st.session_state.scheduled_runs:
+        st.markdown("---")
+        st.subheader("Recent Scheduled Runs")
+        
+        runs_df = pd.DataFrame(st.session_state.scheduled_runs)
+        runs_df = runs_df.sort_values('timestamp', ascending=False)
+        
+        # Format the display
+        for _, run in runs_df.iterrows():
+            col1, col2, col3 = st.columns([1, 1, 3])
+            
+            with col1:
+                st.text(run['timestamp'])
+            
+            with col2:
+                status = run['status']
+                if status == 'completed':
+                    st.success(f"✅ {status}")
+                elif status == 'failed' or status == 'error':
+                    st.error(f"❌ {status}")
+                elif status == 'timeout':
+                    st.warning(f"⏰ {status}")
+                else:
+                    st.info(f"🔄 {status}")
+            
+            with col3:
+                if 'message' in run:
+                    st.text(run['message'])
+    
+    # Important notes
+    st.markdown("---")
+    st.subheader("Important Notes")
+    
+    st.warning("""
+    **Deployment Considerations:**
+    - ⚠️ **Streamlit Cloud**: Free tier may have limitations for long-running processes
+    - 🔄 **App Restarts**: Scheduler will restart automatically when the app restarts
+    - 💾 **Persistence**: Scheduled run history is stored in session state (temporary)
+    - 🕐 **Timezone**: All times are in UTC
+    - ⏱️ **Timeout**: Analysis jobs timeout after 1 hour
+    """)
+
+# Add this to your main() function after creating tabs
 def main():
     st.set_page_config(
         page_title="Validator Analysis Dashboard",
@@ -841,20 +1141,28 @@ def main():
     # Initialize admin authentication in main (so it's always visible)
     has_admin_access = initialize_admin_auth()
     
+    # Start scheduler if configured (do this after admin auth)
+    if has_admin_access:
+        scheduler = st.session_state.scheduler_manager
+        if scheduler.should_enable_scheduler() and not scheduler.is_running:
+            scheduler.start_scheduler()
+    
     # Show message if user clicked dashboard button
     if 'force_dashboard' in st.session_state and st.session_state.force_dashboard:
         st.info("**Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
         st.session_state.force_dashboard = False
     
-    # Create tabs
-    tab1, tab2 = st.tabs(["Run Analysis", "Dashboard"])
+    # Create tabs - ADD SCHEDULER TAB
+    tab1, tab2, tab3 = st.tabs(["Run Analysis", "Dashboard", "Scheduler"])
     
     with tab1:
         analysis_tab()
     
     with tab2:
         dashboard_tab()
-
+    
+    with tab3:
+        scheduler_tab()
 
 if __name__ == "__main__":
     main()
