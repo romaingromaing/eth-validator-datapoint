@@ -125,6 +125,64 @@ def load_data_from_supabase():
         }
         return pd.DataFrame(), metadata
 
+def check_admin_access():
+    """
+    Check if the user has admin access to run analysis and refresh data
+    Returns: bool - True if user has admin access
+    """
+    def get_secret(key):
+        # Try Streamlit secrets first, with proper error handling
+        try:
+            if hasattr(st, 'secrets') and st.secrets is not None:
+                return st.secrets.get(key)
+        except Exception:
+            # If secrets.toml doesn't exist or has issues, continue to env vars
+            pass
+        
+        # Fall back to environment variables
+        import os
+        return os.getenv(key)
+    
+    # Method 1: Simple password check
+    admin_password = get_secret('ADMIN_PASSWORD')
+    if admin_password:
+        if 'admin_authenticated' not in st.session_state:
+            st.session_state.admin_authenticated = False
+        
+        if not st.session_state.admin_authenticated:
+            with st.sidebar:
+                st.markdown("---")
+                st.subheader("Admin Access")
+                password_input = st.text_input("Admin Password", type="password", key="admin_password")
+                if st.button("Login", key="admin_login"):
+                    if password_input == admin_password:
+                        st.session_state.admin_authenticated = True
+                        st.success("Admin access granted!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid password")
+                st.markdown("*Admin access required for analysis and refresh*")
+        
+        return st.session_state.admin_authenticated
+    
+    # Method 2: IP-based access (fallback)
+    allowed_ips = get_secret('ALLOWED_IPS')  # Comma-separated list of IPs
+    if allowed_ips:
+        # Note: This is limited in cloud deployments due to proxies
+        try:
+            import socket
+            user_ip = st.context.headers.get('x-forwarded-for', '').split(',')[0].strip()
+            if not user_ip:
+                user_ip = st.context.headers.get('x-real-ip', '')
+            allowed_ip_list = [ip.strip() for ip in allowed_ips.split(',')]
+            return user_ip in allowed_ip_list
+        except:
+            pass
+    
+    # Method 3: Environment-based (default to admin if no restrictions set)
+    restrict_access = get_secret('RESTRICT_ADMIN_ACCESS', 'false').lower() == 'true'
+    return not restrict_access
+
 def check_environment_variables():
     """
     Check if all required environment variables/secrets are available
@@ -230,6 +288,14 @@ def analysis_tab():
     Enhanced tab for running the validator analysis with real-time output
     """
     st.header("Run Validator Analysis")
+    
+    # Check admin access
+    has_admin_access = check_admin_access()
+    
+    if not has_admin_access:
+        st.warning("🔒 Admin access required to run analysis")
+        st.info("This tab allows running the validator analysis pipeline. Please contact an administrator for access.")
+        return
     
     st.markdown("""
     This will run the complete validator analysis pipeline:
@@ -493,13 +559,18 @@ def dashboard_tab():
     """
     st.header("Validator Analysis Dashboard")
     
-    # Add refresh button at the top of dashboard
-    col1, col2, col3 = st.columns([2, 1, 2])
-    with col2:
-        if st.button("Refresh Data", use_container_width=True):
-            st.cache_data.clear()
-            st.success("Data refreshed! Loading latest data from database...")
-            st.rerun()
+    # Add refresh button at the top of dashboard (only for admin users)
+    has_admin_access = check_admin_access()
+    
+    if has_admin_access:
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col2:
+            if st.button("Refresh Data", use_container_width=True):
+                st.cache_data.clear()
+                st.success("Data refreshed! Loading latest data from database...")
+                st.rerun()
+    else:
+        st.info("📊 Viewing dashboard in read-only mode")
     
     # Load data
     with st.spinner("Loading data from Supabase..."):
@@ -578,9 +649,9 @@ def dashboard_tab():
         if status_filter == "Active":
             filtered_df = filtered_df[filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting'])]
         elif status_filter == "Inactive":
-            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited', 'exited_unslashed', 'exited_slashed'])]
+            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited_unslashed', 'exited_slashed'])]
         elif status_filter == "Exited":
-            filtered_df = filtered_df[filtered_df[status_column].isin(['exited', 'exited_unslashed', 'exited_slashed'])]
+            filtered_df = filtered_df[filtered_df[status_column].isin(['exited_unslashed', 'exited_slashed'])]
     
     # Calculate validator status (active/inactive)
     if 'state' in filtered_df.columns:
