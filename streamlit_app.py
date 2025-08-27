@@ -125,9 +125,9 @@ def load_data_from_supabase():
         }
         return pd.DataFrame(), metadata
 
-def check_admin_access():
+def initialize_admin_auth():
     """
-    Check if the user has admin access to run analysis and refresh data
+    Initialize admin authentication state and show login in sidebar if needed
     Returns: bool - True if user has admin access
     """
     def get_secret(key):
@@ -143,18 +143,19 @@ def check_admin_access():
         import os
         return os.getenv(key)
     
+    # Initialize session state
+    if 'admin_authenticated' not in st.session_state:
+        st.session_state.admin_authenticated = False
+    
     # Method 1: Simple password check
     admin_password = get_secret('ADMIN_PASSWORD')
     if admin_password:
-        if 'admin_authenticated' not in st.session_state:
-            st.session_state.admin_authenticated = False
-        
         if not st.session_state.admin_authenticated:
             with st.sidebar:
                 st.markdown("---")
-                st.subheader("Admin Access")
-                password_input = st.text_input("Admin Password", type="password", key="admin_password")
-                if st.button("Login", key="admin_login"):
+                st.subheader("🔒 Admin Access")
+                password_input = st.text_input("Admin Password", type="password", key="global_admin_password")
+                if st.button("Login", key="global_admin_login"):
                     if password_input == admin_password:
                         st.session_state.admin_authenticated = True
                         st.success("Admin access granted!")
@@ -162,6 +163,13 @@ def check_admin_access():
                     else:
                         st.error("Invalid password")
                 st.markdown("*Admin access required for analysis and refresh*")
+        else:
+            with st.sidebar:
+                st.markdown("---")
+                st.success("🔓 Admin Access Granted")
+                if st.button("Logout", key="global_admin_logout"):
+                    st.session_state.admin_authenticated = False
+                    st.rerun()
         
         return st.session_state.admin_authenticated
     
@@ -289,12 +297,12 @@ def analysis_tab():
     """
     st.header("Run Validator Analysis")
     
-    # Check admin access
-    has_admin_access = check_admin_access()
+    # Check admin access using session state (no duplicate widgets)
+    has_admin_access = st.session_state.get('admin_authenticated', False)
     
     if not has_admin_access:
         st.warning("🔒 Admin access required to run analysis")
-        st.info("This tab allows running the validator analysis pipeline. Please contact an administrator for access.")
+        st.info("This tab allows running the validator analysis pipeline. Please login in the sidebar for access.")
         return
     
     st.markdown("""
@@ -553,33 +561,72 @@ def analysis_tab():
                 key="download_log"
             )
 
+def get_last_refresh_date(df):
+    """
+    Get the last data refresh date from the created_at column
+    Returns: (datetime, str) - (datetime object, formatted string)
+    """
+    if df.empty or 'created_at' not in df.columns:
+        return None, "Unknown"
+    
+    try:
+        # Get the most recent created_at timestamp
+        last_refresh = df['created_at'].max()
+        if pd.isna(last_refresh):
+            return None, "Unknown"
+        
+        # Format for display
+        formatted_date = last_refresh.strftime('%Y-%m-%d %H:%M:%S UTC')
+        return last_refresh, formatted_date
+    except Exception:
+        return None, "Unknown"
+
 def dashboard_tab():
     """
-    Dashboard functionality with refresh button
+    Dashboard functionality with refresh button and last refresh date
     """
     st.header("Validator Analysis Dashboard")
     
-    # Add refresh button at the top of dashboard (only for admin users)
-    has_admin_access = check_admin_access()
+    # Check admin access using session state (no duplicate widgets)
+    has_admin_access = st.session_state.get('admin_authenticated', False)
     
-    if has_admin_access:
-        col1, col2, col3 = st.columns([2, 1, 2])
-        with col2:
-            if st.button("Refresh Data", use_container_width=True):
-                st.cache_data.clear()
-                st.success("Data refreshed! Loading latest data from database...")
-                st.rerun()
-    else:
-        st.info("📊 Viewing dashboard in read-only mode")
-    
-    # Load data
+    # Load data first
     with st.spinner("Loading data from Supabase..."):
         df, metadata = load_data_from_supabase()
     
-    # Show connection status
-    if metadata['success']:
-        st.success(f"Successfully loaded {metadata['record_count']} records from table '{metadata['table_name']}'")
+    # Get last refresh date
+    last_refresh_dt, last_refresh_str = get_last_refresh_date(df)
+    
+    # Top section with status and refresh controls
+    col1, col2, col3 = st.columns([2, 1, 2])
+    
+    with col1:
+        # Show connection status
+        if metadata['success']:
+            st.success(f"✅ Loaded {metadata['record_count']} records")
+        else:
+            st.error("❌ Failed to load data")
+    
+    with col2:
+        # Admin refresh button
+        if has_admin_access:
+            if st.button("Refresh Data", use_container_width=True):
+                st.cache_data.clear()
+                st.success("Data refreshed!")
+                st.rerun()
+    
+    with col3:
+        # Last refresh info
+        st.info(f"📅 Last refresh: {last_refresh_str}")
+    
+    # Access mode indicator
+    if has_admin_access:
+        st.info("🔓 **Admin Mode** - Full access with refresh capability")
     else:
+        st.info("👁️ **Read-Only Mode** - Viewing latest data")
+    
+    # Show connection error details if needed
+    if not metadata['success']:
         st.error(f"Failed to load data: {metadata['error']}")
         
         # Show debugging information
@@ -612,7 +659,8 @@ def dashboard_tab():
     
     # Show data summary
     if not df.empty:
-        st.info(f"Displaying data from {len(df)} validator records from database")
+        st.markdown("---")
+        st.info(f"📊 Displaying data from {len(df)} validator records from database")
     
     # Sidebar filters - Combined Activity Filter
     st.sidebar.header("Filters")
@@ -649,9 +697,9 @@ def dashboard_tab():
         if status_filter == "Active":
             filtered_df = filtered_df[filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting'])]
         elif status_filter == "Inactive":
-            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited_unslashed', 'exited_slashed'])]
+            filtered_df = filtered_df[~filtered_df[status_column].isin(['active_online', 'exiting_online', 'active_exiting', 'exited_unslashed','exited', 'exited_slashed'])]
         elif status_filter == "Exited":
-            filtered_df = filtered_df[filtered_df[status_column].isin(['exited_unslashed', 'exited_slashed'])]
+            filtered_df = filtered_df[filtered_df[status_column].isin(['exited','exited_unslashed', 'exited_slashed'])]
     
     # Calculate validator status (active/inactive)
     if 'state' in filtered_df.columns:
@@ -701,96 +749,3 @@ def dashboard_tab():
     
     with col3:
         st.metric("Inactive Validators", inactive_validators)
-    
-    st.markdown("---")
-    
-    # Deposit Address Source Score Cards (4 cards)
-    st.subheader("Deposit Address Sources")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Unique Addresses", unique_deposit_addresses)
-    
-    with col2:
-        st.metric("From Wallet", from_wallet)
-    
-    with col3:
-        st.metric("From Smart Contract", from_smart_contract)
-    
-    with col4:
-        st.metric("From DEX", from_dex)
-    
-    st.markdown("---")
-    
-    # Data table
-    st.subheader("Validator Data")
-    
-    # Show available columns
-    available_columns = list(filtered_df.columns)
-    st.caption(f"Available columns: {', '.join(available_columns)}")
-    
-    # Show key columns by default if they exist
-    key_columns = []
-    preferred_columns = ['index', 'pubkey', 'status', 'deposit_address', 'last_transaction_time', 'is_smart_contract', 'is_dex']
-    
-    for col in preferred_columns:
-        if col in filtered_df.columns:
-            key_columns.append(col)
-    
-    # Handle both 'status' and 'state' column names (fallback for different API responses)
-    if 'status' not in key_columns:
-        if 'state' in filtered_df.columns:
-            key_columns.insert(2, 'state')  # Insert at position where 'status' would be
-        elif 'status' in filtered_df.columns:
-            key_columns.insert(2, 'status')
-    
-    # If no preferred columns found, show all
-    if not key_columns:
-        key_columns = available_columns
-    
-    display_df = filtered_df[key_columns] if key_columns else filtered_df
-    
-    # Format datetime columns
-    datetime_columns = ['last_transaction_time', 'created_at', 'updated_at']
-    for col in datetime_columns:
-        if col in display_df.columns:
-            display_df = display_df.copy()
-            display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
-    
-    st.dataframe(display_df, use_container_width=True, height=400)
-    
-    # Download section
-    csv = filtered_df.to_csv(index=False)
-    st.download_button(
-        label="Download as CSV",
-        data=csv,
-        file_name=f"validator_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv"
-    )
-
-def main():
-    st.set_page_config(
-        page_title="Validator Analysis Dashboard",
-        page_icon="🔍",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    st.title("Validator Analysis Platform")
-    
-    # Show message if user clicked dashboard button
-    if 'force_dashboard' in st.session_state and st.session_state.force_dashboard:
-        st.info("**Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
-        st.session_state.force_dashboard = False
-    
-    # Create tabs
-    tab1, tab2 = st.tabs(["Run Analysis", "Dashboard"])
-    
-    with tab1:
-        analysis_tab()
-    
-    with tab2:
-        dashboard_tab()
-
-if __name__ == "__main__":
-    main()
