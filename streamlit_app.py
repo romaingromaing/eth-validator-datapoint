@@ -563,9 +563,9 @@ def dashboard_tab():
             filtered_df = filtered_df[filtered_df['last_transaction_time'] > merge_date]
     
     # Calculate validator status (active/inactive)
-    if 'status' in filtered_df.columns:
-        active_validators = len(filtered_df[filtered_df['status'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
-        inactive_validators = len(filtered_df[~filtered_df['status'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
+    if 'state' in filtered_df.columns:
+        active_validators = len(filtered_df[filtered_df['state'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
+        inactive_validators = len(filtered_df[~filtered_df['state'].isin(['active_ongoing', 'active_exiting', 'active_slashed'])])
     else:
         # Fallback if status column doesn't exist
         active_validators = len(filtered_df)
