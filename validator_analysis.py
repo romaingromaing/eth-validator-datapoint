@@ -113,7 +113,12 @@ def upload_csv_to_supabase(csv_file_path, config):
         cur = conn.cursor()
         
         # Clear existing data (configurable)
-        if getattr(config, 'clear_existing_data', True):
+        clear_data = getattr(config, 'clear_existing_data', True)
+        # Also check environment variable for scheduled runs
+        if os.getenv('CLEAR_EXISTING_DATA', '').lower() == 'true':
+            clear_data = True
+
+        if clear_data:
             print(f"Clearing existing data from {config.table_name}...")
             cur.execute(f"DELETE FROM {config.table_name}")
             deleted_count = cur.rowcount

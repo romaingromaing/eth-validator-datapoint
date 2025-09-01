@@ -681,7 +681,21 @@ def dashboard_tab():
     
     # Sidebar filters - Combined Activity Filter
     st.sidebar.header("Filters")
+
+    # Search functionality
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Search")
+    search_term = st.sidebar.text_input(
+        "Search by Public Key or Deposit Address",
+        placeholder="Enter pubkey or deposit address...",
+        help="Search for specific validators by their public key or deposit address"
+    )
+
+    if search_term:
+        if st.sidebar.button("Clear Search", width='stretch'):
+            st.rerun()
     
+
     activity_filter = st.sidebar.selectbox(
         "Validator Activity",
         ["All", "Active after Shapella (Apr 12, 2023)", "Active after Merge (Sep 15, 2022)"]
@@ -695,6 +709,27 @@ def dashboard_tab():
         )
     else:
         status_filter = "All"
+    
+    # Apply search filter
+    if search_term:
+        search_term_lower = search_term.lower()
+        search_mask = False
+
+        # Search in pubkey column
+        if 'pubkey' in filtered_df.columns:
+            search_mask |= filtered_df['pubkey'].str.lower().str.contains(search_term_lower, na=False)
+
+        # Search in deposit_address column
+        if 'deposit_address' in filtered_df.columns:
+            search_mask |= filtered_df['deposit_address'].str.lower().str.contains(search_term_lower, na=False)
+
+        filtered_df = filtered_df[search_mask]
+
+        # Show search results info
+        if len(filtered_df) == 0:
+            st.warning(f"No results found for '{search_term}'")
+        else:
+            st.info(f"Found {len(filtered_df)} validator(s) matching '{search_term}'")
     
     # Apply activity filters
     filtered_df = df.copy()
@@ -878,6 +913,7 @@ class SchedulerManager:
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
             env['SCHEDULED_RUN'] = 'true'  # Flag to indicate this is a scheduled run
+            env['CLEAR_EXISTING_DATA'] = 'true'
             
             process = subprocess.Popen(
                 [sys.executable, "-u", "validator_analysis.py"],
