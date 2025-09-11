@@ -829,7 +829,7 @@ def dashboard_tab():
     
     # Show key columns by default if they exist
     key_columns = []
-    preferred_columns = ['index', 'pubkey', 'status', 'deposit_address', 'last_transaction_time', 'is_smart_contract', 'is_dex']
+    preferred_columns = ['index', 'pubkey', 'status', 'deposit_address', 'operator', 'last_transaction_time', 'is_smart_contract', 'is_dex']
     
     for col in preferred_columns:
         if col in filtered_df.columns:
