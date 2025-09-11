@@ -165,6 +165,7 @@ CREATE TABLE validator_data (
     id BIGSERIAL PRIMARY KEY,
     index INTEGER NOT NULL,
     pubkey TEXT NOT NULL,
+    state TEXT,
     deposit_address TEXT,
     last_transaction_time TIMESTAMPTZ,
     is_smart_contract BOOLEAN DEFAULT FALSE,
@@ -179,6 +180,14 @@ CREATE INDEX idx_validator_contract ON validator_data(is_smart_contract);
 CREATE INDEX idx_validator_dex ON validator_data(is_dex);
 CREATE INDEX idx_validator_activity ON validator_data(last_transaction_time);
 CREATE INDEX idx_validator_created ON validator_data(created_at);
+
+
+-- Step 1: Add the operator column to validator_data table
+ALTER TABLE validator_data 
+ADD COLUMN operator TEXT;
+
+-- Add index for performance
+CREATE INDEX idx_validator_operator ON validator_data(operator);
 ```
 
 ## Production Deployment
