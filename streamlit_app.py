@@ -710,6 +710,9 @@ def dashboard_tab():
     else:
         status_filter = "All"
     
+    # Apply activity filters
+    filtered_df = df.copy()
+
     # Apply search filter
     if search_term:
         search_term_lower = search_term.lower()
@@ -730,9 +733,6 @@ def dashboard_tab():
             st.warning(f"No results found for '{search_term}'")
         else:
             st.info(f"Found {len(filtered_df)} validator(s) matching '{search_term}'")
-    
-    # Apply activity filters
-    filtered_df = df.copy()
     
     if 'last_transaction_time' in df.columns:
         if activity_filter == "Active after Shapella (Apr 12, 2023)":
