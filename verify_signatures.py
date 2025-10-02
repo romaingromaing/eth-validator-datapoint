@@ -2,6 +2,9 @@ import json
 import sys
 
 
+# At the top of your script
+DEBUG_MODE = '--debug' in sys.argv
+
 from verify_keystore_signature import validate_bls_to_execution_change_keystore
 
 validator_file = "./0x00-validators.json"
@@ -63,7 +66,7 @@ def verify_json(json_file):
             to_execution_address=to_execution_address,
             signature=keystore_signature,
             pubkey=validator_pubkey,
-            debug=True  # Enable debug output
+            debug=DEBUG_MODE
         )
 
         if not valid_keystore_signature:
