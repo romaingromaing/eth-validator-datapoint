@@ -74,6 +74,7 @@ def validate_bls_to_execution_change_keystore(validator_index: str,
                                               to_execution_address: str,
                                               signature: str,
                                               pubkey: str) -> bool:
+    
     bls_pubkey = BLSPubkey(bytes.fromhex(pubkey))
     bls_signature = BLSSignature(decode_hex(signature))
     message = BLSToExecutionChangeKeystore(  # type: ignore[no-untyped-call]
