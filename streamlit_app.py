@@ -564,7 +564,7 @@ def dashboard_tab():
     
     # Show key columns by default if they exist
     key_columns = []
-    preferred_columns = ['index', 'pubkey', 'status', 'deposit_address', 'operator', 'last_transaction_time', 'is_smart_contract', 'is_dex']
+    preferred_columns = ['index', 'pubkey', 'status', 'deposit_address', 'operator', 'last_transaction_time', 'to_execution_address', 'designation', 'is_smart_contract', 'is_dex']
     
     for col in preferred_columns:
         if col in filtered_df.columns:
@@ -1182,7 +1182,7 @@ def flag_validator_as_lost(validator_index, to_execution_address):
         
         # Update the validator record
         response = supabase.table(config.table_name).update({
-            'status': 'lost',
+            'designation': 'lost',
             'to_execution_address': to_execution_address,
             'updated_at': datetime.now().isoformat()
         }).eq('index', validator_index).execute()
