@@ -1180,18 +1180,17 @@ def flag_validator_as_lost(validator_index, to_execution_address):
         
         supabase: Client = create_client(config.supabase_url, config.supabase_key)
         
-        # First check if the validator exists
-        check_response = supabase.table(config.table_name).select("index").eq('index', validator_index).execute()
-        
-        if not check_response.data or len(check_response.data) == 0:
-            return False, f"Validator with index {validator_index} not found in database"
+        # First verify the validator exists
+        check = supabase.table(config.table_name).select("index").eq('index', int(validator_index)).execute()
+        if not check.data:
+            return False, f"Validator {validator_index} not found in database"
         
         # Update the validator record
         response = supabase.table(config.table_name).update({
             'designation': 'lost',
             'to_execution_address': to_execution_address,
             'updated_at': datetime.now().isoformat()
-        }).eq('index', validator_index).execute()
+        }).eq('index', int(validator_index)).execute()
         
         if response.data and len(response.data) > 0:
             return True, f"Validator {validator_index} flagged as lost successfully"
@@ -1282,27 +1281,30 @@ def vote_tab():
                             st.markdown("---")
                             st.subheader("Step 3: Flag Validator as Lost")
                             
-                            st.warning("""
-                            ⚠️ **Important**: By flagging this validator as lost, you are indicating that:
-                            - You no longer have access to the validator keys
-                            - The validator should be marked for recovery or exit
-                            - This action will update the validator status in the database
+                            st.warning(f"""
+                            ⚠️ **Important**: This will update the database with:
+                            - Validator Index: {validator_index}
+                            - To Execution Address: {to_execution_address}
+                            - Designation: 'lost'
                             """)
                             
-                            confirm = st.checkbox("I confirm that I want to flag this validator as lost")
-                            
-                            if confirm:
-                                if st.button("🚩 Flag Validator as Lost", type="primary", use_container_width=True):
-                                    success, message = flag_validator_as_lost(validator_index, to_execution_address)
-                                    
-                                    if success:
-                                        st.success(f"✅ {message}")
-                                        st.balloons()
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("🚩 Flag as Lost", type="primary", use_container_width=True, key=f"flag_{validator_index}"):
+                                    with st.spinner("Updating database..."):
+                                        success, message = flag_validator_as_lost(validator_index, to_execution_address)
                                         
-                                        # Clear cache to show updated data
-                                        st.cache_data.clear()
-                                    else:
-                                        st.error(f"❌ {message}")
+                                        if success:
+                                            st.success(f"✅ {message}")
+                                            st.balloons()
+                                            st.cache_data.clear()
+                                        else:
+                                            st.error(f"❌ {message}")
+                                            st.info("Check that the validator index exists in your database")
+                            
+                            with col2:
+                                if st.button("Cancel", use_container_width=True, key=f"cancel_{validator_index}"):
+                                    st.info("Operation cancelled")
                         else:
                             st.error("❌ Signature verification failed!")
                             st.warning("""
