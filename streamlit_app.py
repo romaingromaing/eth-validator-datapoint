@@ -1257,7 +1257,7 @@ def vote_tab():
                             json.dump(uploaded_data, f)
                         
                         # Verify using the verify_json function
-                        is_valid = verify_json(temp_file_path)
+                        is_valid = verify_json(temp_file_path, debug=True)
                         
                         if is_valid:
                             st.success("✅ Signature verified successfully!")

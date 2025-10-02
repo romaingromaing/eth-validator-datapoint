@@ -73,19 +73,43 @@ def compute_bls_change_keystore(fork_version: bytes, genesis_validators_root: by
 def validate_bls_to_execution_change_keystore(validator_index: str,
                                               to_execution_address: str,
                                               signature: str,
-                                              pubkey: str) -> bool:
-    
+                                              pubkey: str,
+                                              debug: bool = False) -> bool:
+    # Convert inputs
     bls_pubkey = BLSPubkey(bytes.fromhex(pubkey))
     bls_signature = BLSSignature(decode_hex(signature))
-    message = BLSToExecutionChangeKeystore(  # type: ignore[no-untyped-call]
+    message = BLSToExecutionChangeKeystore(
         to_execution_address=decode_hex(to_execution_address),
         validator_index=int(validator_index)
     )
-
+    
+    if debug:
+        print("\n=== DEBUG INFO ===")
+        print(f"Validator Index: {validator_index}")
+        print(f"To Execution Address: {to_execution_address}")
+        print(f"Pubkey: {pubkey}")
+        print(f"Signature: {signature}")
+        print(f"\nBLS Pubkey bytes: {bls_pubkey.hex()}")
+        print(f"Message to_execution_address: {message.to_execution_address.hex()}")
+        print(f"Message validator_index: {message.validator_index}")
+    
     domain = compute_bls_change_keystore(
         fork_version=bytes.fromhex('00000000'),
         genesis_validators_root=bytes.fromhex('4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95')
     )
-
+    
+    if debug:
+        print(f"Domain: {domain.hex()}")
+    
     signing_root = compute_signing_root(message, domain)
-    return bls.Verify(bls_pubkey, signing_root, bls_signature)
+    
+    if debug:
+        print(f"Signing Root: {signing_root.hex()}")
+        print("==================\n")
+    
+    result = bls.Verify(bls_pubkey, signing_root, bls_signature)
+    
+    if debug:
+        print(f"Verification Result: {result}")
+    
+    return result
