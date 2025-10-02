@@ -1180,25 +1180,58 @@ def flag_validator_as_lost(validator_index, to_execution_address):
         
         supabase: Client = create_client(config.supabase_url, config.supabase_key)
         
-        # First verify the validator exists
-        check = supabase.table(config.table_name).select("index").eq('index', int(validator_index)).execute()
-        if not check.data:
-            return False, f"Validator {validator_index} not found in database"
+        # DEBUG: Log what we're trying to do
+        print(f"DEBUG: Attempting to flag validator")
+        print(f"  - Validator Index: {validator_index} (type: {type(validator_index)})")
+        print(f"  - Execution Address: {to_execution_address}")
+        print(f"  - Table: {config.table_name}")
+        
+        # Try to find the validator with various type casts
+        attempts = [
+            validator_index,  # As-is
+            int(validator_index),  # As integer
+            str(validator_index),  # As string
+        ]
+        
+        found_validator = None
+        for attempt in attempts:
+            try:
+                check = supabase.table(config.table_name).select("*").eq('index', attempt).execute()
+                print(f"DEBUG: Checked with index={attempt} (type: {type(attempt)}), found: {len(check.data) if check.data else 0} records")
+                if check.data and len(check.data) > 0:
+                    found_validator = check.data[0]
+                    print(f"DEBUG: Found validator: {found_validator}")
+                    validator_index = attempt  # Use this format for update
+                    break
+            except Exception as e:
+                print(f"DEBUG: Failed with index={attempt}: {e}")
+        
+        if not found_validator:
+            # Try selecting all and see what's in the table
+            all_records = supabase.table(config.table_name).select("index").limit(5).execute()
+            sample_indices = [r.get('index') for r in all_records.data] if all_records.data else []
+            return False, f"Validator {validator_index} not found. Sample indices in DB: {sample_indices}"
         
         # Update the validator record
+        print(f"DEBUG: Attempting update with index={validator_index}")
         response = supabase.table(config.table_name).update({
             'designation': 'lost',
             'to_execution_address': to_execution_address,
             'updated_at': datetime.now().isoformat()
-        }).eq('index', int(validator_index)).execute()
+        }).eq('index', validator_index).execute()
+        
+        print(f"DEBUG: Update response: {response.data}")
         
         if response.data and len(response.data) > 0:
-            return True, f"Validator {validator_index} flagged as lost successfully"
+            return True, f"Successfully updated validator {validator_index}"
         else:
-            return False, f"Failed to update validator {validator_index}. No rows were modified."
+            return False, f"Update returned no data. Response: {response}"
             
     except Exception as e:
-        return False, f"Database error: {str(e)}"
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"DEBUG: Exception occurred:\n{error_details}")
+        return False, f"Error: {str(e)}\n\nFull trace:\n{error_details}"
 
 def vote_tab():
     """
@@ -1292,7 +1325,19 @@ def vote_tab():
                             with col1:
                                 if st.button("🚩 Flag as Lost", type="primary", use_container_width=True, key=f"flag_{validator_index}"):
                                     with st.spinner("Updating database..."):
-                                        success, message = flag_validator_as_lost(validator_index, to_execution_address)
+                                        # Capture stdout for debugging
+                                        import io
+                                        import sys
+                                        
+                                        old_stdout = sys.stdout
+                                        sys.stdout = debug_output = io.StringIO()
+                                        
+                                        try:
+                                            success, message = flag_validator_as_lost(validator_index, to_execution_address)
+                                        finally:
+                                            sys.stdout = old_stdout
+                                        
+                                        debug_text = debug_output.getvalue()
                                         
                                         if success:
                                             st.success(f"✅ {message}")
@@ -1300,7 +1345,16 @@ def vote_tab():
                                             st.cache_data.clear()
                                         else:
                                             st.error(f"❌ {message}")
-                                            st.info("Check that the validator index exists in your database")
+                                        
+                                        # Show debug output
+                                        with st.expander("Debug Information", expanded=not success):
+                                            st.code(debug_text)
+                                            st.json({
+                                                "validator_index": validator_index,
+                                                "validator_index_type": str(type(validator_index)),
+                                                "to_execution_address": to_execution_address,
+                                                "uploaded_data": uploaded_data
+                                            })
                             
                             with col2:
                                 if st.button("Cancel", use_container_width=True, key=f"cancel_{validator_index}"):
