@@ -4,7 +4,7 @@ import sys
 
 from verify_keystore_signature import validate_bls_to_execution_change_keystore
 
-validator_file = "./unset_validators.json"
+validator_file = "./0x00-validators.json"
 
 def verify_json(json_file):
     try:
