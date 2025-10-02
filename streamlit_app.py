@@ -1173,65 +1173,24 @@ def flag_validator_as_lost(validator_index, to_execution_address):
     """
     Flag a validator as lost in the database
     """
-    try:
-        config = Config()
-        if not config.is_valid:
-            return False, "Invalid Supabase configuration"
-        
-        supabase: Client = create_client(config.supabase_url, config.supabase_key)
-        
-        # DEBUG: Log what we're trying to do
-        print(f"DEBUG: Attempting to flag validator")
-        print(f"  - Validator Index: {validator_index} (type: {type(validator_index)})")
-        print(f"  - Execution Address: {to_execution_address}")
-        print(f"  - Table: {config.table_name}")
-        
-        # Try to find the validator with various type casts
-        attempts = [
-            validator_index,  # As-is
-            int(validator_index),  # As integer
-            str(validator_index),  # As string
-        ]
-        
-        found_validator = None
-        for attempt in attempts:
-            try:
-                check = supabase.table(config.table_name).select("*").eq('index', attempt).execute()
-                print(f"DEBUG: Checked with index={attempt} (type: {type(attempt)}), found: {len(check.data) if check.data else 0} records")
-                if check.data and len(check.data) > 0:
-                    found_validator = check.data[0]
-                    print(f"DEBUG: Found validator: {found_validator}")
-                    validator_index = attempt  # Use this format for update
-                    break
-            except Exception as e:
-                print(f"DEBUG: Failed with index={attempt}: {e}")
-        
-        if not found_validator:
-            # Try selecting all and see what's in the table
-            all_records = supabase.table(config.table_name).select("index").limit(5).execute()
-            sample_indices = [r.get('index') for r in all_records.data] if all_records.data else []
-            return False, f"Validator {validator_index} not found. Sample indices in DB: {sample_indices}"
-        
-        # Update the validator record
-        print(f"DEBUG: Attempting update with index={validator_index}")
+    config = Config()
+    if not config.is_valid:
+        return False, "Invalid Supabase configuration"
+    
+    supabase: Client = create_client(config.supabase_url, config.supabase_key)
+    
+    # Try both string and int versions
+    for idx in [validator_index, int(validator_index) if str(validator_index).isdigit() else validator_index]:
         response = supabase.table(config.table_name).update({
             'designation': 'lost',
             'to_execution_address': to_execution_address,
             'updated_at': datetime.now().isoformat()
-        }).eq('index', validator_index).execute()
-        
-        print(f"DEBUG: Update response: {response.data}")
+        }).eq('index', idx).execute()
         
         if response.data and len(response.data) > 0:
-            return True, f"Successfully updated validator {validator_index}"
-        else:
-            return False, f"Update returned no data. Response: {response}"
-            
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"DEBUG: Exception occurred:\n{error_details}")
-        return False, f"Error: {str(e)}\n\nFull trace:\n{error_details}"
+            return True, f"Updated validator {validator_index}"
+    
+    return False, f"Validator {validator_index} not found or update failed"
 
 def vote_tab():
     """
@@ -1321,44 +1280,56 @@ def vote_tab():
                             - Designation: 'lost'
                             """)
                             
+                            # Initialize session state for this specific validator
+                            flag_state_key = f"flag_action_{validator_index}"
+                            if flag_state_key not in st.session_state:
+                                st.session_state[flag_state_key] = None
+                            
+                            # Show buttons
                             col1, col2 = st.columns(2)
                             with col1:
-                                if st.button("🚩 Flag as Lost", type="primary", use_container_width=True, key=f"flag_{validator_index}"):
-                                    with st.spinner("Updating database..."):
-                                        # Capture stdout for debugging
-                                        import io
-                                        import sys
-                                        
-                                        old_stdout = sys.stdout
-                                        sys.stdout = debug_output = io.StringIO()
-                                        
-                                        try:
-                                            success, message = flag_validator_as_lost(validator_index, to_execution_address)
-                                        finally:
-                                            sys.stdout = old_stdout
-                                        
-                                        debug_text = debug_output.getvalue()
+                                if st.button("🚩 Flag as Lost", type="primary", use_container_width=True, key=f"flag_btn_{validator_index}"):
+                                    st.session_state[flag_state_key] = "processing"
+                                    st.rerun()
+                            
+                            with col2:
+                                if st.button("Cancel", use_container_width=True, key=f"cancel_btn_{validator_index}"):
+                                    st.session_state[flag_state_key] = "cancelled"
+                                    st.rerun()
+                            
+                            # Process the action after rerun
+                            if st.session_state[flag_state_key] == "processing":
+                                with st.spinner("Updating database..."):
+                                    try:
+                                        success, message = flag_validator_as_lost(validator_index, to_execution_address)
                                         
                                         if success:
+                                            st.session_state[flag_state_key] = "success"
                                             st.success(f"✅ {message}")
                                             st.balloons()
                                             st.cache_data.clear()
                                         else:
+                                            st.session_state[flag_state_key] = "failed"
                                             st.error(f"❌ {message}")
-                                        
-                                        # Show debug output
-                                        with st.expander("Debug Information", expanded=not success):
-                                            st.code(debug_text)
-                                            st.json({
-                                                "validator_index": validator_index,
-                                                "validator_index_type": str(type(validator_index)),
-                                                "to_execution_address": to_execution_address,
-                                                "uploaded_data": uploaded_data
-                                            })
+                                            
+                                            # Debug info
+                                            with st.expander("Debug Info"):
+                                                st.write(f"Validator Index: {validator_index} (type: {type(validator_index).__name__})")
+                                                st.write(f"Execution Address: {to_execution_address}")
+                                                st.write(f"Error: {message}")
+                                    except Exception as e:
+                                        st.session_state[flag_state_key] = "error"
+                                        st.error(f"❌ Exception: {str(e)}")
+                                        st.code(str(e))
                             
-                            with col2:
-                                if st.button("Cancel", use_container_width=True, key=f"cancel_{validator_index}"):
-                                    st.info("Operation cancelled")
+                            elif st.session_state[flag_state_key] == "cancelled":
+                                st.info("Operation cancelled")
+                                st.session_state[flag_state_key] = None
+                            
+                            elif st.session_state[flag_state_key] in ["success", "failed", "error"]:
+                                if st.button("Reset", use_container_width=True, key=f"reset_{validator_index}"):
+                                    st.session_state[flag_state_key] = None
+                                    st.rerun()
                         else:
                             st.error("❌ Signature verification failed!")
                             st.warning("""
