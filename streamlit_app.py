@@ -18,6 +18,10 @@ import atexit
 # Load environment variables from .env file
 load_dotenv()
 
+# Import verification functions
+from verify_keystore_signature import validate_bls_to_execution_change_keystore
+from verify_signatures import verify_json
+
 # Configuration
 class Config:
     def __init__(self):
@@ -163,7 +167,7 @@ def initialize_admin_auth():
                         st.rerun()
                     else:
                         st.error("Invalid password")
-                st.markdown("*Admin access required for analysis and refresh*")
+                st.markdown("*Admin access required for analysis and scheduling*")
         else:
             with st.sidebar:
                 st.markdown("---")
@@ -292,276 +296,6 @@ def get_new_output_lines(output_queue):
     
     return lines, process_finished
 
-def analysis_tab():
-    """
-    Enhanced tab for running the validator analysis with real-time output
-    """
-    st.header("Run Validator Analysis")
-    
-    # Check admin access using session state (no duplicate widgets)
-    has_admin_access = st.session_state.get('admin_authenticated', False)
-    
-    if not has_admin_access:
-        st.warning("🔒 Admin access required to run analysis")
-        st.info("This tab allows running the validator analysis pipeline. Please login in the sidebar for access.")
-        return
-    
-    st.markdown("""
-    This will run the complete validator analysis pipeline:
-    1. **Environment Setup** - Load configuration and validate settings
-    2. **Data Loading** - Load validator data from JSON file
-    3. **Deposit Addresses** - Fetch deposit addresses from BeaconChain API
-    4. **Transaction Analysis** - Get transaction data from Dune API and check for smart contracts
-    5. **DEX Analysis** - Identify DEX addresses using Dune query
-    6. **CSV Export** - Save processed data to CSV file
-    7. **Database Upload** - Upload data directly to Supabase using PostgreSQL COPY
-    """)
-    
-    # Check if required files exist
-    required_files = ["validator_analysis.py", "0x00-validators.json"]
-    missing_files = [f for f in required_files if not os.path.exists(f)]
-    
-    if missing_files:
-        st.error(f"Missing required files: {', '.join(missing_files)}")
-        st.info("Please ensure all required files are in the same directory as this Streamlit app.")
-        return
-    
-    # Environment variables check
-    all_vars_present, missing_vars = check_environment_variables()
-    
-    if not all_vars_present:
-        st.error(f"Missing environment variables: {', '.join(missing_vars)}")
-        with st.expander("Environment Variables Setup Guide"):
-            st.markdown("""
-            **Required Environment Variables:**
-            ```
-            DUNE_SIM_API_KEY=your_dune_sim_api_key
-            DUNE_CLIENT_API_KEY=your_dune_client_api_key
-            SUPABASE_URL=your_supabase_url
-            SUPABASE_KEY=your_supabase_anon_key
-            SUPABASE_DATABASE_URL=postgresql://postgres.xxx:password@aws-x-region.pooler.supabase.com:5432/postgres
-            SUPABASE_TABLE_NAME=validator_data
-            ```
-            """)
-        return
-    
-    st.success("All requirements met. Ready to run analysis!")
-    
-    # Add manual dashboard access button
-    st.markdown("---")
-    if st.button("Go to Dashboard", width='stretch'):
-        # Clear cache and indicate dashboard should be viewed
-        st.cache_data.clear()
-        st.session_state.force_dashboard = True
-        st.rerun()
-    
-    st.markdown("---")
-    
-    # Initialize session state
-    if 'analysis_process' not in st.session_state:
-        st.session_state.analysis_process = None
-    if 'analysis_output' not in st.session_state:
-        st.session_state.analysis_output = []
-    if 'analysis_status' not in st.session_state:
-        st.session_state.analysis_status = "idle"  # idle, running, completed, failed
-    if 'analysis_start_time' not in st.session_state:
-        st.session_state.analysis_start_time = None
-    if 'output_queue' not in st.session_state:
-        st.session_state.output_queue = None
-    if 'output_thread' not in st.session_state:
-        st.session_state.output_thread = None
-    
-    # Current status
-    process = st.session_state.analysis_process
-    status = st.session_state.analysis_status
-    
-    # Control buttons
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        start_disabled = (status == "running")
-        if st.button("Start Analysis", type="primary", width='stretch', disabled=start_disabled):
-            # Clean up any existing process
-            if st.session_state.analysis_process:
-                try:
-                    st.session_state.analysis_process.terminate()
-                    st.session_state.analysis_process.wait(timeout=3)
-                except:
-                    try:
-                        st.session_state.analysis_process.kill()
-                    except:
-                        pass
-            
-            # Clean up existing thread
-            if st.session_state.output_thread and st.session_state.output_thread.is_alive():
-                # Thread will stop when process terminates
-                pass
-            
-            # Start new analysis
-            st.session_state.analysis_process = start_analysis_subprocess()
-            st.session_state.analysis_output = []
-            st.session_state.analysis_status = "running"
-            st.session_state.analysis_start_time = time.time()
-            
-            # Create output queue and thread
-            if st.session_state.analysis_process:
-                st.session_state.output_queue = queue.Queue()
-                st.session_state.output_thread = threading.Thread(
-                    target=read_process_output_thread,
-                    args=(st.session_state.analysis_process, st.session_state.output_queue),
-                    daemon=True
-                )
-                st.session_state.output_thread.start()
-            
-            st.rerun()
-    
-    with col2:
-        stop_disabled = (status != "running")
-        if st.button("Stop Analysis", width='stretch', disabled=stop_disabled):
-            if st.session_state.analysis_process:
-                try:
-                    st.session_state.analysis_process.terminate()
-                    st.session_state.analysis_process.wait(timeout=5)
-                except:
-                    try:
-                        st.session_state.analysis_process.kill()
-                    except:
-                        pass
-            
-            st.session_state.analysis_status = "failed"
-            st.session_state.analysis_process = None
-            st.rerun()
-    
-    # Status display and real-time output handling
-    if status == "running":
-        st.info("Analysis is currently running...")
-        
-        # Create containers for status and output
-        progress_container = st.container()
-        output_container = st.container()
-        
-        # Check if we have new output
-        if st.session_state.output_queue:
-            new_lines, process_finished = get_new_output_lines(st.session_state.output_queue)
-            
-            # Add new lines to output
-            if new_lines:
-                for line in new_lines:
-                    timestamp = datetime.now().strftime('%H:%M:%S')
-                    formatted_line = f"[{timestamp}] {line}"
-                    st.session_state.analysis_output.append(formatted_line)
-                
-                # Keep output manageable (last 2000 lines)
-                if len(st.session_state.analysis_output) > 2000:
-                    st.session_state.analysis_output = st.session_state.analysis_output[-1500:]
-            
-            # Check if process finished
-            if process_finished or (process and process.poll() is not None):
-                if process and process.poll() == 0:
-                    st.session_state.analysis_status = "completed"
-                    completion_time = datetime.now().strftime('%H:%M:%S')
-                    st.session_state.analysis_output.append(f"[{completion_time}] Analysis completed successfully!")
-                else:
-                    st.session_state.analysis_status = "failed"
-                    error_time = datetime.now().strftime('%H:%M:%S')
-                    exit_code = process.poll() if process else "Unknown"
-                    st.session_state.analysis_output.append(f"[{error_time}] Analysis failed with exit code: {exit_code}")
-                
-                st.session_state.analysis_process = None
-                st.rerun()
-        
-        # Show progress info
-        with progress_container:
-            if st.session_state.analysis_start_time:
-                elapsed = time.time() - st.session_state.analysis_start_time
-                st.text(f"Elapsed time: {elapsed:.0f} seconds")
-            
-            # Parse current step from recent output
-            recent_output = st.session_state.analysis_output[-10:] if st.session_state.analysis_output else []
-            current_step = "Starting analysis..."
-            
-            for line in reversed(recent_output):
-                line_lower = line.lower()
-                if any(keyword in line_lower for keyword in [
-                    "processing batch", "fetching", "analyzing", "uploading", 
-                    "saving", "loading", "connecting", "querying"
-                ]):
-                    # Extract the step description
-                    if "] " in line:
-                        current_step = line.split("] ", 1)[-1]
-                    else:
-                        current_step = line
-                    break
-            
-            st.text(f"Current step: {current_step}")
-        
-        # Auto-refresh every 0.5 seconds while running for more responsive updates
-        time.sleep(0.5)
-        st.rerun()
-    
-    elif status == "completed":
-        st.success("Analysis completed successfully!")
-        if st.session_state.analysis_start_time:
-            total_time = time.time() - st.session_state.analysis_start_time
-            st.text(f"Total time: {total_time:.0f} seconds")
-        
-        # Add dashboard button when analysis is complete
-        st.markdown("---")
-        if st.button("View Dashboard", type="primary", width='stretch'):
-            # Clear data cache to force refresh
-            st.cache_data.clear()
-            # Set flag to show dashboard message
-            st.session_state.force_dashboard = True
-            st.rerun()
-    
-    elif status == "failed":
-        st.error("Analysis failed or was stopped")
-    
-    # Show output if available
-    if st.session_state.analysis_output:
-        with st.expander("Analysis Output", expanded=(status == "running")):
-            # Show last 200 lines to keep it manageable but comprehensive
-            display_lines = st.session_state.analysis_output[-200:] if len(st.session_state.analysis_output) > 200 else st.session_state.analysis_output
-            
-            # Format output with better status indicators
-            formatted_output = []
-            for line in display_lines:
-                line_lower = line.lower()
-                if any(success_word in line_lower for success_word in ["completed successfully", "successfully uploaded", "success", "saved", "finished"]):
-                    formatted_output.append(f"✅ {line}")
-                elif any(error_word in line_lower for error_word in ["error", "failed", "exception", "timeout"]):
-                    formatted_output.append(f"❌ {line}")
-                elif any(progress_word in line_lower for progress_word in ["processing", "fetching", "analyzing", "loading", "getting", "found"]):
-                    formatted_output.append(f"🔄 {line}")
-                elif any(info_word in line_lower for info_word in ["starting", "total", "batch", "query"]):
-                    formatted_output.append(f"ℹ️  {line}")
-                else:
-                    formatted_output.append(f"   {line}")
-            
-            # Create a scrollable text area for better viewing
-            output_text = "\n".join(formatted_output)
-            st.text_area(
-                "Live Output",
-                value=output_text,
-                height=500,
-                key=f"output_display_{status}_{len(st.session_state.analysis_output)}",
-                disabled=True
-            )
-            
-            # Show total lines info
-            st.caption(f"Showing last {len(display_lines)} of {len(st.session_state.analysis_output)} total lines")
-        
-        # Download option
-        if st.session_state.analysis_output:
-            log_content = "\n".join(st.session_state.analysis_output)
-            st.download_button(
-                label="Download Analysis Log",
-                data=log_content,
-                file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain",
-                key="download_log"
-            )
-
 def get_last_refresh_date(df):
     """
     Get the last data refresh date from the created_at column
@@ -581,6 +315,7 @@ def get_last_refresh_date(df):
         return last_refresh, formatted_date
     except Exception:
         return None, "Unknown"
+
 
 def dashboard_tab():
     """
@@ -866,6 +601,7 @@ def dashboard_tab():
         mime="text/csv"
     )
 
+
 class SchedulerManager:
     def __init__(self):
         self.scheduler = None
@@ -1014,24 +750,294 @@ class SchedulerManager:
 if 'scheduler_manager' not in st.session_state:
     st.session_state.scheduler_manager = SchedulerManager()
 
-def scheduler_tab():
+def admin_tab():
     """
-    New tab for managing the automated scheduler
+    Combined Admin tab with analysis and scheduler functionality
     """
-    st.header("Automated Scheduler")
+    st.header("Admin Panel")
     
-    scheduler = st.session_state.scheduler_manager
-    
-    # Check admin access
+    # Check admin access using session state (no duplicate widgets)
     has_admin_access = st.session_state.get('admin_authenticated', False)
     
     if not has_admin_access:
-        st.warning("🔒 Admin access required to manage scheduler")
-        st.info("Please login in the sidebar for access.")
+        st.warning("🔒 Admin access required")
+        st.info("This tab allows running the validator analysis pipeline and managing the automated scheduler. Please login in the sidebar for access.")
         return
     
-    # Configuration section
-    st.subheader("Configuration")
+    # Create sub-sections using expanders
+    with st.expander("📊 Run Validator Analysis", expanded=True):
+        run_analysis_section()
+    
+    st.markdown("---")
+    
+    with st.expander("⏰ Automated Scheduler", expanded=False):
+        scheduler_section()
+
+def run_analysis_section():
+    """
+    Analysis section (formerly analysis_tab content)
+    """
+    st.markdown("""
+    This will run the complete validator analysis pipeline:
+    1. **Environment Setup** - Load configuration and validate settings
+    2. **Data Loading** - Load validator data from JSON file
+    3. **Deposit Addresses** - Fetch deposit addresses from BeaconChain API
+    4. **Transaction Analysis** - Get transaction data from Dune API and check for smart contracts
+    5. **DEX Analysis** - Identify DEX addresses using Dune query
+    6. **CSV Export** - Save processed data to CSV file
+    7. **Database Upload** - Upload data directly to Supabase using PostgreSQL COPY
+    """)
+    
+    # Check if required files exist
+    required_files = ["validator_analysis.py", "0x00-validators.json"]
+    missing_files = [f for f in required_files if not os.path.exists(f)]
+    
+    if missing_files:
+        st.error(f"Missing required files: {', '.join(missing_files)}")
+        st.info("Please ensure all required files are in the same directory as this Streamlit app.")
+        return
+    
+    # Environment variables check
+    all_vars_present, missing_vars = check_environment_variables()
+    
+    if not all_vars_present:
+        st.error(f"Missing environment variables: {', '.join(missing_vars)}")
+        with st.expander("Environment Variables Setup Guide"):
+            st.markdown("""
+            **Required Environment Variables:**
+            ```
+            DUNE_SIM_API_KEY=your_dune_sim_api_key
+            DUNE_CLIENT_API_KEY=your_dune_client_api_key
+            SUPABASE_URL=your_supabase_url
+            SUPABASE_KEY=your_supabase_anon_key
+            SUPABASE_DATABASE_URL=postgresql://postgres.xxx:password@aws-x-region.pooler.supabase.com:5432/postgres
+            SUPABASE_TABLE_NAME=validator_data
+            ```
+            """)
+        return
+    
+    st.success("All requirements met. Ready to run analysis!")
+    
+    # Add manual dashboard access button
+    st.markdown("---")
+    if st.button("Go to Dashboard", use_container_width=True):
+        # Clear cache and indicate dashboard should be viewed
+        st.cache_data.clear()
+        st.session_state.force_dashboard = True
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Initialize session state
+    if 'analysis_process' not in st.session_state:
+        st.session_state.analysis_process = None
+    if 'analysis_output' not in st.session_state:
+        st.session_state.analysis_output = []
+    if 'analysis_status' not in st.session_state:
+        st.session_state.analysis_status = "idle"  # idle, running, completed, failed
+    if 'analysis_start_time' not in st.session_state:
+        st.session_state.analysis_start_time = None
+    if 'output_queue' not in st.session_state:
+        st.session_state.output_queue = None
+    if 'output_thread' not in st.session_state:
+        st.session_state.output_thread = None
+    
+    # Current status
+    process = st.session_state.analysis_process
+    status = st.session_state.analysis_status
+    
+    # Control buttons
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        start_disabled = (status == "running")
+        if st.button("Start Analysis", type="primary", use_container_width=True, disabled=start_disabled):
+            # Clean up any existing process
+            if st.session_state.analysis_process:
+                try:
+                    st.session_state.analysis_process.terminate()
+                    st.session_state.analysis_process.wait(timeout=3)
+                except:
+                    try:
+                        st.session_state.analysis_process.kill()
+                    except:
+                        pass
+            
+            # Clean up existing thread
+            if st.session_state.output_thread and st.session_state.output_thread.is_alive():
+                # Thread will stop when process terminates
+                pass
+            
+            # Start new analysis
+            st.session_state.analysis_process = start_analysis_subprocess()
+            st.session_state.analysis_output = []
+            st.session_state.analysis_status = "running"
+            st.session_state.analysis_start_time = time.time()
+            
+            # Create output queue and thread
+            if st.session_state.analysis_process:
+                st.session_state.output_queue = queue.Queue()
+                st.session_state.output_thread = threading.Thread(
+                    target=read_process_output_thread,
+                    args=(st.session_state.analysis_process, st.session_state.output_queue),
+                    daemon=True
+                )
+                st.session_state.output_thread.start()
+            
+            st.rerun()
+    
+    with col2:
+        stop_disabled = (status != "running")
+        if st.button("Stop Analysis", use_container_width=True, disabled=stop_disabled):
+            if st.session_state.analysis_process:
+                try:
+                    st.session_state.analysis_process.terminate()
+                    st.session_state.analysis_process.wait(timeout=5)
+                except:
+                    try:
+                        st.session_state.analysis_process.kill()
+                    except:
+                        pass
+            
+            st.session_state.analysis_status = "failed"
+            st.session_state.analysis_process = None
+            st.rerun()
+    
+    # Status display and real-time output handling
+    if status == "running":
+        st.info("Analysis is currently running...")
+        
+        # Create containers for status and output
+        progress_container = st.container()
+        output_container = st.container()
+        
+        # Check if we have new output
+        if st.session_state.output_queue:
+            new_lines, process_finished = get_new_output_lines(st.session_state.output_queue)
+            
+            # Add new lines to output
+            if new_lines:
+                for line in new_lines:
+                    timestamp = datetime.now().strftime('%H:%M:%S')
+                    formatted_line = f"[{timestamp}] {line}"
+                    st.session_state.analysis_output.append(formatted_line)
+                
+                # Keep output manageable (last 2000 lines)
+                if len(st.session_state.analysis_output) > 2000:
+                    st.session_state.analysis_output = st.session_state.analysis_output[-1500:]
+            
+            # Check if process finished
+            if process_finished or (process and process.poll() is not None):
+                if process and process.poll() == 0:
+                    st.session_state.analysis_status = "completed"
+                    completion_time = datetime.now().strftime('%H:%M:%S')
+                    st.session_state.analysis_output.append(f"[{completion_time}] Analysis completed successfully!")
+                else:
+                    st.session_state.analysis_status = "failed"
+                    error_time = datetime.now().strftime('%H:%M:%S')
+                    exit_code = process.poll() if process else "Unknown"
+                    st.session_state.analysis_output.append(f"[{error_time}] Analysis failed with exit code: {exit_code}")
+                
+                st.session_state.analysis_process = None
+                st.rerun()
+        
+        # Show progress info
+        with progress_container:
+            if st.session_state.analysis_start_time:
+                elapsed = time.time() - st.session_state.analysis_start_time
+                st.text(f"Elapsed time: {elapsed:.0f} seconds")
+            
+            # Parse current step from recent output
+            recent_output = st.session_state.analysis_output[-10:] if st.session_state.analysis_output else []
+            current_step = "Starting analysis..."
+            
+            for line in reversed(recent_output):
+                line_lower = line.lower()
+                if any(keyword in line_lower for keyword in [
+                    "processing batch", "fetching", "analyzing", "uploading", 
+                    "saving", "loading", "connecting", "querying"
+                ]):
+                    # Extract the step description
+                    if "] " in line:
+                        current_step = line.split("] ", 1)[-1]
+                    else:
+                        current_step = line
+                    break
+            
+            st.text(f"Current step: {current_step}")
+        
+        # Auto-refresh every 0.5 seconds while running for more responsive updates
+        time.sleep(0.5)
+        st.rerun()
+    
+    elif status == "completed":
+        st.success("Analysis completed successfully!")
+        if st.session_state.analysis_start_time:
+            total_time = time.time() - st.session_state.analysis_start_time
+            st.text(f"Total time: {total_time:.0f} seconds")
+        
+        # Add dashboard button when analysis is complete
+        st.markdown("---")
+        if st.button("View Dashboard", type="primary", use_container_width=True):
+            # Clear data cache to force refresh
+            st.cache_data.clear()
+            # Set flag to show dashboard message
+            st.session_state.force_dashboard = True
+            st.rerun()
+    
+    elif status == "failed":
+        st.error("Analysis failed or was stopped")
+    
+    # Show output if available
+    if st.session_state.analysis_output:
+        with st.expander("Analysis Output", expanded=(status == "running")):
+            # Show last 200 lines to keep it manageable but comprehensive
+            display_lines = st.session_state.analysis_output[-200:] if len(st.session_state.analysis_output) > 200 else st.session_state.analysis_output
+            
+            # Format output with better status indicators
+            formatted_output = []
+            for line in display_lines:
+                line_lower = line.lower()
+                if any(success_word in line_lower for success_word in ["completed successfully", "successfully uploaded", "success", "saved", "finished"]):
+                    formatted_output.append(f"✅ {line}")
+                elif any(error_word in line_lower for error_word in ["error", "failed", "exception", "timeout"]):
+                    formatted_output.append(f"❌ {line}")
+                elif any(progress_word in line_lower for progress_word in ["processing", "fetching", "analyzing", "loading", "getting", "found"]):
+                    formatted_output.append(f"🔄 {line}")
+                elif any(info_word in line_lower for info_word in ["starting", "total", "batch", "query"]):
+                    formatted_output.append(f"ℹ️  {line}")
+                else:
+                    formatted_output.append(f"   {line}")
+            
+            # Create a scrollable text area for better viewing
+            output_text = "\n".join(formatted_output)
+            st.text_area(
+                "Live Output",
+                value=output_text,
+                height=500,
+                key=f"output_display_{status}_{len(st.session_state.analysis_output)}",
+                disabled=True
+            )
+            
+            # Show total lines info
+            st.caption(f"Showing last {len(display_lines)} of {len(st.session_state.analysis_output)} total lines")
+        
+        # Download option
+        if st.session_state.analysis_output:
+            log_content = "\n".join(st.session_state.analysis_output)
+            st.download_button(
+                label="Download Analysis Log",
+                data=log_content,
+                file_name=f"analysis_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                key="download_log"
+            )
+
+def scheduler_section():
+    """
+    Scheduler section (formerly scheduler_tab content)
+    """
+    scheduler = st.session_state.scheduler_manager
     
     # Check if scheduler can be enabled
     can_enable = scheduler.should_enable_scheduler()
@@ -1083,28 +1089,28 @@ def scheduler_tab():
     
     with col1:
         if not scheduler.is_running:
-            if st.button("Start Scheduler", type="primary", width='stretch'):
+            if st.button("Start Scheduler", type="primary", use_container_width=True):
                 if scheduler.start_scheduler():
                     st.success("Scheduler started!")
                     st.rerun()
                 else:
                     st.error("Failed to start scheduler")
         else:
-            if st.button("Stop Scheduler", width='stretch'):
+            if st.button("Stop Scheduler", use_container_width=True):
                 scheduler.stop_scheduler()
                 st.success("Scheduler stopped!")
                 st.rerun()
     
     with col2:
         if scheduler.is_running:
-            if st.button("Manual Run", width='stretch'):
+            if st.button("Manual Run", use_container_width=True):
                 if scheduler.trigger_manual_run():
                     st.success("Manual analysis started!")
                 else:
                     st.error("Failed to start manual run")
     
     with col3:
-        if st.button("Refresh Status", width='stretch'):
+        if st.button("Refresh Status", use_container_width=True):
             st.rerun()
     
     # Status display
@@ -1163,7 +1169,176 @@ def scheduler_tab():
     - ⏱️ **Timeout**: Analysis jobs timeout after 1 hour
     """)
 
-# Add this to your main() function after creating tabs
+def flag_validator_as_lost(validator_index, to_execution_address):
+    """
+    Flag a validator as lost in the database
+    """
+    try:
+        config = Config()
+        if not config.is_valid:
+            return False, "Invalid Supabase configuration"
+        
+        supabase: Client = create_client(config.supabase_url, config.supabase_key)
+        
+        # Update the validator record
+        response = supabase.table(config.table_name).update({
+            'status': 'lost',
+            'to_execution_address': to_execution_address,
+            'updated_at': datetime.now().isoformat()
+        }).eq('index', validator_index).execute()
+        
+        if response.data:
+            return True, "Validator flagged as lost successfully"
+        else:
+            return False, "Failed to update validator"
+            
+    except Exception as e:
+        return False, f"Error: {str(e)}"
+
+def vote_tab():
+    """
+    New Vote tab for Ethereum Validator Signature Generator
+    """
+    st.header("Ethereum Validator Signature Generator")
+    
+    st.markdown("---")
+    st.subheader("Step 1: Create Keystore Signature")
+    
+    # Instructions
+    st.markdown("#### Follow these steps to generate your keystore signature using ethstaker-deposit-cli")
+    
+    st.markdown("**a. Download ethstaker-deposit-cli**")
+    st.markdown("Download the latest version (at least v0.1.3) from the official repository")
+    
+    if st.button("📥 Download ethstaker-deposit-cli", use_container_width=True, type="primary"):
+        st.markdown("[Click here to open download page](https://github.com/eth-educators/ethstaker-deposit-cli/releases/tag/v1.0.0)")
+    
+    st.markdown("**b. Run the CLI Command**")
+    st.markdown("Open a terminal and run the generate-bls-to-execution-change-keystore command")
+    st.code("./deposit generate-bls-to-execution-change-keystore --keystore=PATH_TO_FILE", language="bash")
+    
+    st.markdown("**c. Locate the Generated File**")
+    st.markdown("""
+    The command will generate a `bls_to_execution_change_keystore_transaction-*-*.json` file 
+    in the `bls_to_execution_changes_keystore` directory. You'll need this file for step 2.
+    """)
+    
+    st.info("💡 Need help? Check out the [detailed documentation](https://deposit-cli.ethstaker.cc/generate_bls_to_execution_change_keystore.html) for more information.")
+    
+    st.markdown("---")
+    st.subheader("Step 2: Upload and Verify Signature")
+    
+    # File upload
+    uploaded_file = st.file_uploader(
+        "Upload your keystore signature JSON file",
+        type=['json'],
+        help="Upload the bls_to_execution_change_keystore_transaction JSON file"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Read the uploaded file
+            file_contents = uploaded_file.read()
+            uploaded_data = json.loads(file_contents)
+            
+            # Display file contents
+            with st.expander("View Uploaded File Contents"):
+                st.json(uploaded_data)
+            
+            # Verify button
+            if st.button("🔍 Verify Signature", type="primary", use_container_width=True):
+                with st.spinner("Verifying signature..."):
+                    # Save temporary file for verification
+                    temp_file_path = f"temp_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    
+                    try:
+                        # Write temporary file
+                        with open(temp_file_path, 'w') as f:
+                            json.dump(uploaded_data, f)
+                        
+                        # Verify using the verify_json function
+                        is_valid = verify_json(temp_file_path)
+                        
+                        if is_valid:
+                            st.success("✅ Signature verified successfully!")
+                            
+                            # Extract validator information
+                            validator_index = uploaded_data.get("validator_index")
+                            to_execution_address = uploaded_data.get("to_execution_address")
+                            
+                            st.info(f"""
+                            **Verified Information:**
+                            - Validator Index: {validator_index}
+                            - To Execution Address: {to_execution_address}
+                            """)
+                            
+                            # Flag validator option
+                            st.markdown("---")
+                            st.subheader("Step 3: Flag Validator as Lost")
+                            
+                            st.warning("""
+                            ⚠️ **Important**: By flagging this validator as lost, you are indicating that:
+                            - You no longer have access to the validator keys
+                            - The validator should be marked for recovery or exit
+                            - This action will update the validator status in the database
+                            """)
+                            
+                            confirm = st.checkbox("I confirm that I want to flag this validator as lost")
+                            
+                            if confirm:
+                                if st.button("🚩 Flag Validator as Lost", type="primary", use_container_width=True):
+                                    success, message = flag_validator_as_lost(validator_index, to_execution_address)
+                                    
+                                    if success:
+                                        st.success(f"✅ {message}")
+                                        st.balloons()
+                                        
+                                        # Clear cache to show updated data
+                                        st.cache_data.clear()
+                                    else:
+                                        st.error(f"❌ {message}")
+                        else:
+                            st.error("❌ Signature verification failed!")
+                            st.warning("""
+                            **Possible reasons for failure:**
+                            - Invalid signature format
+                            - Validator not found in the database
+                            - Mismatched validator index or public key
+                            - Incorrect execution address
+                            """)
+                    
+                    finally:
+                        # Clean up temporary file
+                        if os.path.exists(temp_file_path):
+                            os.remove(temp_file_path)
+        
+        except json.JSONDecodeError:
+            st.error("❌ Invalid JSON file. Please upload a valid keystore signature file.")
+        except Exception as e:
+            st.error(f"❌ Error processing file: {str(e)}")
+    
+    else:
+        st.info("👆 Please upload your keystore signature JSON file to begin verification")
+    
+    st.markdown("---")
+    st.subheader("Additional Resources")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        **Documentation:**
+        - [ethstaker-deposit-cli Guide](https://deposit-cli.ethstaker.cc/)
+        - [BLS to Execution Change](https://deposit-cli.ethstaker.cc/generate_bls_to_execution_change_keystore.html)
+        """)
+    
+    with col2:
+        st.markdown("""
+        **Support:**
+        - [GitHub Issues](https://github.com/eth-educators/ethstaker-deposit-cli/issues)
+        - [EthStaker Discord](https://discord.io/ethstaker)
+        """)
+
 def main():
     st.set_page_config(
         page_title="Validator Analysis Dashboard",
@@ -1188,17 +1363,17 @@ def main():
         st.info("**Dashboard Updated!** Click on the 'Dashboard' tab above to view the latest data.")
         st.session_state.force_dashboard = False
     
-    # Create tabs - ADD SCHEDULER TAB
-    tab1, tab2, tab3 = st.tabs(["Run Analysis", "Dashboard", "Scheduler"])
+    # Create tabs - Updated structure
+    tab1, tab2, tab3 = st.tabs(["Admin", "Dashboard", "Vote"])
     
     with tab1:
-        analysis_tab()
+        admin_tab()
     
     with tab2:
         dashboard_tab()
     
     with tab3:
-        scheduler_tab()
+        vote_tab()
 
 if __name__ == "__main__":
     main()
