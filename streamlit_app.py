@@ -1225,6 +1225,16 @@ def vote_tab():
     st.markdown("---")
     st.subheader("Step 2: Upload and Verify Signature")
     
+    # Initialize session states
+    if 'verification_complete' not in st.session_state:
+        st.session_state.verification_complete = False
+    if 'verified_validator_index' not in st.session_state:
+        st.session_state.verified_validator_index = None
+    if 'verified_execution_address' not in st.session_state:
+        st.session_state.verified_execution_address = None
+    if 'flag_result' not in st.session_state:
+        st.session_state.flag_result = None
+    
     # File upload
     uploaded_file = st.file_uploader(
         "Upload your keystore signature JSON file",
@@ -1257,79 +1267,10 @@ def vote_tab():
                         is_valid = verify_json(temp_file_path)
                         
                         if is_valid:
-                            st.success("✅ Signature verified successfully!")
-                            
-                            # Extract validator information
-                            validator_index = uploaded_data.get("validator_index")
-                            to_execution_address = uploaded_data.get("to_execution_address")
-                            
-                            st.info(f"""
-                            **Verified Information:**
-                            - Validator Index: {validator_index}
-                            - To Execution Address: {to_execution_address}
-                            """)
-                            
-                            # Flag validator option
-                            st.markdown("---")
-                            st.subheader("Step 3: Flag Validator as Lost")
-                            
-                            st.warning(f"""
-                            ⚠️ **Important**: This will update the database with:
-                            - Validator Index: {validator_index}
-                            - To Execution Address: {to_execution_address}
-                            - Designation: 'lost'
-                            """)
-                            
-                            # Initialize session state for this specific validator
-                            flag_state_key = f"flag_action_{validator_index}"
-                            if flag_state_key not in st.session_state:
-                                st.session_state[flag_state_key] = None
-                            
-                            # Show buttons
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                if st.button("🚩 Flag as Lost", type="primary", use_container_width=True, key=f"flag_btn_{validator_index}"):
-                                    st.session_state[flag_state_key] = "processing"
-                                    st.rerun()
-                            
-                            with col2:
-                                if st.button("Cancel", use_container_width=True, key=f"cancel_btn_{validator_index}"):
-                                    st.session_state[flag_state_key] = "cancelled"
-                                    st.rerun()
-                            
-                            # Process the action after rerun
-                            if st.session_state[flag_state_key] == "processing":
-                                with st.spinner("Updating database..."):
-                                    try:
-                                        success, message = flag_validator_as_lost(validator_index, to_execution_address)
-                                        
-                                        if success:
-                                            st.session_state[flag_state_key] = "success"
-                                            st.success(f"✅ {message}")
-                                            st.balloons()
-                                            st.cache_data.clear()
-                                        else:
-                                            st.session_state[flag_state_key] = "failed"
-                                            st.error(f"❌ {message}")
-                                            
-                                            # Debug info
-                                            with st.expander("Debug Info"):
-                                                st.write(f"Validator Index: {validator_index} (type: {type(validator_index).__name__})")
-                                                st.write(f"Execution Address: {to_execution_address}")
-                                                st.write(f"Error: {message}")
-                                    except Exception as e:
-                                        st.session_state[flag_state_key] = "error"
-                                        st.error(f"❌ Exception: {str(e)}")
-                                        st.code(str(e))
-                            
-                            elif st.session_state[flag_state_key] == "cancelled":
-                                st.info("Operation cancelled")
-                                st.session_state[flag_state_key] = None
-                            
-                            elif st.session_state[flag_state_key] in ["success", "failed", "error"]:
-                                if st.button("Reset", use_container_width=True, key=f"reset_{validator_index}"):
-                                    st.session_state[flag_state_key] = None
-                                    st.rerun()
+                            st.session_state.verification_complete = True
+                            st.session_state.verified_validator_index = uploaded_data.get("validator_index")
+                            st.session_state.verified_execution_address = uploaded_data.get("to_execution_address")
+                            st.rerun()
                         else:
                             st.error("❌ Signature verification failed!")
                             st.warning("""
@@ -1339,11 +1280,62 @@ def vote_tab():
                             - Mismatched validator index or public key
                             - Incorrect execution address
                             """)
-                    
                     finally:
                         # Clean up temporary file
                         if os.path.exists(temp_file_path):
                             os.remove(temp_file_path)
+            
+            # Show verification success and flag option
+            if st.session_state.verification_complete and st.session_state.verified_validator_index:
+                st.success("✅ Signature verified successfully!")
+                
+                validator_index = st.session_state.verified_validator_index
+                to_execution_address = st.session_state.verified_execution_address
+                
+                st.info(f"""
+                **Verified Information:**
+                - Validator Index: {validator_index}
+                - To Execution Address: {to_execution_address}
+                """)
+                
+                # Flag validator section
+                st.markdown("---")
+                st.subheader("Step 3: Flag Validator as Lost")
+                
+                st.warning(f"""
+                ⚠️ **Important**: This will update the database with:
+                - Validator Index: {validator_index}
+                - To Execution Address: {to_execution_address}
+                - Designation: 'lost'
+                """)
+                
+                # Show result if action was taken
+                if st.session_state.flag_result:
+                    if st.session_state.flag_result['success']:
+                        st.success(f"✅ {st.session_state.flag_result['message']}")
+                        st.balloons()
+                        if st.button("Flag Another Validator"):
+                            st.session_state.verification_complete = False
+                            st.session_state.flag_result = None
+                            st.rerun()
+                    else:
+                        st.error(f"❌ {st.session_state.flag_result['message']}")
+                        with st.expander("Troubleshooting"):
+                            st.write(f"Validator Index: {validator_index}")
+                            st.write(f"Type: {type(validator_index)}")
+                            st.write(f"Execution Address: {to_execution_address}")
+                        if st.button("Try Again"):
+                            st.session_state.flag_result = None
+                            st.rerun()
+                else:
+                    # Show flag button
+                    if st.button("🚩 Flag Validator as Lost", type="primary", use_container_width=True):
+                        with st.spinner("Updating database..."):
+                            success, message = flag_validator_as_lost(validator_index, to_execution_address)
+                            st.session_state.flag_result = {'success': success, 'message': message}
+                            if success:
+                                st.cache_data.clear()
+                            st.rerun()
         
         except json.JSONDecodeError:
             st.error("❌ Invalid JSON file. Please upload a valid keystore signature file.")
