@@ -1180,6 +1180,12 @@ def flag_validator_as_lost(validator_index, to_execution_address):
         
         supabase: Client = create_client(config.supabase_url, config.supabase_key)
         
+        # First check if the validator exists
+        check_response = supabase.table(config.table_name).select("index").eq('index', validator_index).execute()
+        
+        if not check_response.data or len(check_response.data) == 0:
+            return False, f"Validator with index {validator_index} not found in database"
+        
         # Update the validator record
         response = supabase.table(config.table_name).update({
             'designation': 'lost',
@@ -1187,13 +1193,13 @@ def flag_validator_as_lost(validator_index, to_execution_address):
             'updated_at': datetime.now().isoformat()
         }).eq('index', validator_index).execute()
         
-        if response.data:
-            return True, "Validator flagged as lost successfully"
+        if response.data and len(response.data) > 0:
+            return True, f"Validator {validator_index} flagged as lost successfully"
         else:
-            return False, "Failed to update validator"
+            return False, f"Failed to update validator {validator_index}. No rows were modified."
             
     except Exception as e:
-        return False, f"Error: {str(e)}"
+        return False, f"Database error: {str(e)}"
 
 def vote_tab():
     """
