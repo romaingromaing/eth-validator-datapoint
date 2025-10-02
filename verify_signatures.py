@@ -17,7 +17,7 @@ def verify_json(json_file):
         # grab contents from signature file
         to_execution_address = data.get("to_execution_address")
         validator_index = data.get("validator_index")
-        deposit_signature = data.get("deposit_signature")
+        #deposit_signature = data.get("deposit_signature")
         keystore_signature = data.get("keystore_signature")
 
         # Validator 0 has 0x01 credentials so this won't accidentally trigger
@@ -36,7 +36,7 @@ def verify_json(json_file):
             print(f"Unable to find validator of index {validator_index}")
             return False
 
-        deposit_address = validator_data.get("deposit_address")
+        #deposit_address = validator_data.get("deposit_address")
         validator_pubkey = validator_data.get("pubkey")
 
         if not keystore_signature:
