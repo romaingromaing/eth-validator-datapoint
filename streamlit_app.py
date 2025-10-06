@@ -358,7 +358,7 @@ def dashboard_tab():
     
     # Admin refresh button
     if has_admin_access:
-        if st.button("Refresh Data", use_container_width=False):
+        if st.button("Refresh Data", width=False):
             st.cache_data.clear()
             st.success("Data refreshed!")
             st.rerun()
@@ -413,7 +413,7 @@ def dashboard_tab():
     )
 
     if search_term:
-        if st.sidebar.button("Clear Search", use_container_width=True):
+        if st.sidebar.button("Clear Search", width=True):
             st.rerun()
     
     activity_filter = st.sidebar.selectbox(
@@ -516,7 +516,7 @@ def dashboard_tab():
             display_df = display_df.copy()
             display_df[col] = pd.to_datetime(display_df[col], errors='coerce').dt.strftime('%Y-%m-%d %H:%M')
     
-    st.dataframe(display_df, use_container_width=True, height=400)
+    st.dataframe(display_df, width=True, height=400)
     
     # Download section
     csv = filtered_df.to_csv(index=False)
@@ -782,7 +782,7 @@ def run_analysis_section():
     
     # Add manual dashboard access button
     st.markdown("---")
-    if st.button("Go to Dashboard", use_container_width=True):
+    if st.button("Go to Dashboard", width=True):
         # Clear cache and indicate dashboard should be viewed
         st.cache_data.clear()
         st.session_state.force_dashboard = True
@@ -813,7 +813,7 @@ def run_analysis_section():
     
     with col1:
         start_disabled = (status == "running")
-        if st.button("Start Analysis", type="primary", use_container_width=True, disabled=start_disabled):
+        if st.button("Start Analysis", type="primary", width=True, disabled=start_disabled):
             # Clean up any existing process
             if st.session_state.analysis_process:
                 try:
@@ -850,7 +850,7 @@ def run_analysis_section():
     
     with col2:
         stop_disabled = (status != "running")
-        if st.button("Stop Analysis", use_container_width=True, disabled=stop_disabled):
+        if st.button("Stop Analysis", width=True, disabled=stop_disabled):
             if st.session_state.analysis_process:
                 try:
                     st.session_state.analysis_process.terminate()
@@ -940,7 +940,7 @@ def run_analysis_section():
         
         # Add dashboard button when analysis is complete
         st.markdown("---")
-        if st.button("View Dashboard", type="primary", use_container_width=True):
+        if st.button("View Dashboard", type="primary", width=True):
             # Clear data cache to force refresh
             st.cache_data.clear()
             # Set flag to show dashboard message
@@ -1051,28 +1051,28 @@ def scheduler_section():
     
     with col1:
         if not scheduler.is_running:
-            if st.button("Start Scheduler", type="primary", use_container_width=True):
+            if st.button("Start Scheduler", type="primary", width=True):
                 if scheduler.start_scheduler():
                     st.success("Scheduler started!")
                     st.rerun()
                 else:
                     st.error("Failed to start scheduler")
         else:
-            if st.button("Stop Scheduler", use_container_width=True):
+            if st.button("Stop Scheduler", width=True):
                 scheduler.stop_scheduler()
                 st.success("Scheduler stopped!")
                 st.rerun()
     
     with col2:
         if scheduler.is_running:
-            if st.button("Manual Run", use_container_width=True):
+            if st.button("Manual Run", width=True):
                 if scheduler.trigger_manual_run():
                     st.success("Manual analysis started!")
                 else:
                     st.error("Failed to start manual run")
     
     with col3:
-        if st.button("Refresh Status", use_container_width=True):
+        if st.button("Refresh Status", width=True):
             st.rerun()
     
     # Status display
@@ -1169,7 +1169,7 @@ def vote_tab():
     st.markdown("**a. Download ethstaker-deposit-cli**")
     st.markdown("Download the latest version (at least v0.1.3) from the official repository")
     
-    if st.button("📥 Download ethstaker-deposit-cli", use_container_width=True, type="primary"):
+    if st.button("📥 Download ethstaker-deposit-cli", width=True, type="primary"):
         st.markdown("[Click here to open download page](https://github.com/eth-educators/ethstaker-deposit-cli/releases/tag/v1.0.0)")
     
     st.markdown("**b. Run the CLI Command**")
@@ -1215,7 +1215,7 @@ def vote_tab():
                 st.json(uploaded_data)
             
             # Verify button
-            if st.button("🔍 Verify Signature", type="primary", use_container_width=True):
+            if st.button("🔍 Verify Signature", type="primary", width=True):
                 with st.spinner("Verifying signature..."):
                     # Save temporary file for verification
                     temp_file_path = f"temp_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -1291,7 +1291,7 @@ def vote_tab():
                             st.rerun()
                 else:
                     # Show flag button
-                    if st.button("🚩 Flag Validator as Lost", type="primary", use_container_width=True):
+                    if st.button("🚩 Flag Validator as Lost", type="primary", width=True):
                         with st.spinner("Updating database..."):
                             success, message = flag_validator_as_lost(validator_index, to_execution_address)
                             st.session_state.flag_result = {'success': success, 'message': message}
