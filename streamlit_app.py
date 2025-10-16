@@ -1209,27 +1209,37 @@ def vote_tab():
             # Read the uploaded file
             file_contents = uploaded_file.read()
             uploaded_data = json.loads(file_contents)
-            
+
             # Display file contents
             with st.expander("View Uploaded File Contents"):
                 st.json(uploaded_data)
-            
+
             # Verify button
             if st.button("🔍 Verify Signature", type="primary", width='stretch'):
                 with st.spinner("Verifying signature..."):
                     # Save temporary file for verification
                     temp_file_path = f"temp_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                    
+
                     try:
+                        # Extract data from nested structure if needed
+                        message = uploaded_data.get("message", uploaded_data)
+                        verification_data = {
+                            "validator_index": message.get("validator_index"),
+                            "to_execution_address": message.get("to_execution_address"),
+                            "signature": uploaded_data.get("signature") or uploaded_data.get("keystore_signature")
+                        }
+
                         # Write temporary file
                         with open(temp_file_path, 'w') as f:
-                            json.dump(uploaded_data, f)
+                            json.dump(verification_data, f)
                         
                         # Verify using the verify_json function
                         is_valid = verify_json(temp_file_path)
                         
                         if is_valid:
                             st.session_state.verification_complete = True
+                            # Extract from message if nested, otherwise from root
+                            message = uploaded_data.get("message", uploaded_data)
                             st.session_state.verified_validator_index = uploaded_data.get("validator_index")
                             st.session_state.verified_execution_address = uploaded_data.get("to_execution_address")
                             st.rerun()

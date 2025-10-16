@@ -2,7 +2,6 @@ import json
 import sys
 
 
-# At the top of your script
 DEBUG_MODE = '--debug' in sys.argv
 
 from verify_keystore_signature import validate_bls_to_execution_change_keystore
