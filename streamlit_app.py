@@ -1221,17 +1221,9 @@ def vote_tab():
                     temp_file_path = f"temp_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
                     try:
-                        # Extract data from nested structure if needed
-                        message = uploaded_data.get("message", uploaded_data)
-                        verification_data = {
-                            "validator_index": message.get("validator_index"),
-                            "to_execution_address": message.get("to_execution_address"),
-                            "signature": uploaded_data.get("signature") or uploaded_data.get("keystore_signature")
-                        }
-
-                        # Write temporary file
+                        
                         with open(temp_file_path, 'w') as f:
-                            json.dump(verification_data, f)
+                            json.dump(uploaded_data, f)
                         
                         # Verify using the verify_json function
                         is_valid = verify_json(temp_file_path)
