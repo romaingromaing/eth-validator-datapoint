@@ -1131,9 +1131,14 @@ def scheduler_section():
     - ⏱️ **Timeout**: Analysis jobs timeout after 1 hour
     """)
 
-def flag_validator_as_lost(validator_index, to_execution_address):
+def flag_validator_as_lost(validator_index, to_execution_address, verification_json):
     """
-    Flag a validator as lost in the database
+    Flag a validator as lost in the database and store the verification JSON
+    
+    Args:
+        validator_index: The validator index
+        to_execution_address: The execution address
+        verification_json: The complete JSON file uploaded by the user
     """
     config = Config()
     if not config.is_valid:
@@ -1146,6 +1151,7 @@ def flag_validator_as_lost(validator_index, to_execution_address):
         response = supabase.table(config.table_name).update({
             'designation': 'lost',
             'to_execution_address': to_execution_address,
+            'verification_json': verification_json,  # Store the entire JSON
             'updated_at': datetime.now().isoformat()
         }).eq('index', idx).execute()
         
@@ -1210,6 +1216,11 @@ def vote_tab():
             file_contents = uploaded_file.read()
             uploaded_data = json.loads(file_contents)
 
+            # Store the original JSON in session state
+            if 'uploaded_verification_json' not in st.session_state:
+                st.session_state.uploaded_verification_json = None
+            st.session_state.uploaded_verification_json = uploaded_data
+
             # Display file contents
             with st.expander("View Uploaded File Contents"):
                 st.json(uploaded_data)
@@ -1221,7 +1232,7 @@ def vote_tab():
                     temp_file_path = f"temp_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 
                     try:
-                        
+
                         with open(temp_file_path, 'w') as f:
                             json.dump(uploaded_data, f)
                         
@@ -1234,6 +1245,8 @@ def vote_tab():
                             message = uploaded_data.get("message", uploaded_data)
                             st.session_state.verified_validator_index = message.get("validator_index")
                             st.session_state.verified_execution_address = message.get("to_execution_address")
+                            # ADD THIS LINE: Store the full JSON for later use
+                            st.session_state.uploaded_verification_json = uploaded_data
                             st.rerun()
                         else:
                             st.error("❌ Signature verification failed!")
@@ -1281,6 +1294,7 @@ def vote_tab():
                         if st.button("Flag Another Validator"):
                             st.session_state.verification_complete = False
                             st.session_state.flag_result = None
+                            st.session_state.uploaded_verification_json = None  # Clear the stored JSON
                             st.rerun()
                     else:
                         st.error(f"❌ {st.session_state.flag_result['message']}")
@@ -1295,7 +1309,13 @@ def vote_tab():
                     # Show flag button
                     if st.button("🚩 Flag Validator as Lost", type="primary", width='stretch'):
                         with st.spinner("Updating database..."):
-                            success, message = flag_validator_as_lost(validator_index, to_execution_address)
+                            # Pass the verification JSON to the function
+                            verification_json = st.session_state.get('uploaded_verification_json', {})
+                            success, message = flag_validator_as_lost(
+                                validator_index, 
+                                to_execution_address,
+                                verification_json  # Add the JSON parameter
+                            )
                             st.session_state.flag_result = {'success': success, 'message': message}
                             if success:
                                 st.cache_data.clear()

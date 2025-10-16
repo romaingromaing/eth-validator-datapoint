@@ -119,10 +119,39 @@ def upload_csv_to_supabase(csv_file_path, config):
             clear_data = True
 
         if clear_data:
+            print(f"Preserving validators marked as 'lost' before clearing data...")
+
+            # Step 1: Fetch all validators marked as 'lost' with their verification data
+            cur.execute(f"""
+                SELECT index, designation, to_execution_address, verification_json, state
+                FROM {config.table_name}
+                WHERE designation = 'lost'
+            """)
+            lost_validators = cur.fetchall()
+            lost_validators_data = []
+
+            for row in lost_validators:
+                lost_validators_data.append({
+                    'index': row[0],
+                    'designation': row[1],
+                    'to_execution_address': row[2],
+                    'verification_json': row[3],
+                    'state': row[4]
+                })
+
+            print(f"Found {len(lost_validators_data)} validators marked as 'lost' to preserve")
+
+            # Step 2: Clear existing data
             print(f"Clearing existing data from {config.table_name}...")
             cur.execute(f"DELETE FROM {config.table_name}")
             deleted_count = cur.rowcount
             print(f"Deleted {deleted_count} existing records")
+
+            # Store lost validators data for later restoration
+            # We'll use this after the COPY command
+            conn._lost_validators_data = lost_validators_data
+        else:
+            conn._lost_validators_data = []
         
         # Read CSV headers to verify column structure
         import pandas as pd
@@ -168,7 +197,43 @@ def upload_csv_to_supabase(csv_file_path, config):
         with open(csv_file_path, 'r', encoding=getattr(config, 'encoding', 'utf-8')) as f:
             cur.copy_expert(copy_sql, f)
         
-        # Commit the transaction
+        print("CSV data uploaded successfully")
+        
+        # Step 3: Restore lost validators after repopulating
+        if hasattr(conn, '_lost_validators_data') and conn._lost_validators_data:
+            print(f"\nRestoring {len(conn._lost_validators_data)} validators marked as 'lost'...")
+            
+            restored_count = 0
+            for validator in conn._lost_validators_data:
+                try:
+                    # Update the repopulated record to restore lost status and verification JSON
+                    cur.execute(f"""
+                        UPDATE {config.table_name}
+                        SET designation = %s,
+                            to_execution_address = %s,
+                            verification_json = %s,
+                            state = %s
+                        WHERE index = %s
+                    """, (
+                        validator['designation'],
+                        validator['to_execution_address'],
+                        json.dumps(validator['verification_json']) if validator['verification_json'] else None,
+                        'Confirmed Lost',  # Force state to Confirmed Lost
+                        validator['index']
+                    ))
+                    
+                    if cur.rowcount > 0:
+                        restored_count += 1
+                        print(f"  ✓ Restored validator {validator['index']} as lost")
+                    else:
+                        print(f"  ⚠ Validator {validator['index']} not found in new data (may have been removed)")
+                        
+                except Exception as e:
+                    print(f"  ✗ Failed to restore validator {validator['index']}: {e}")
+            
+            print(f"Successfully restored {restored_count}/{len(conn._lost_validators_data)} lost validators")
+        
+        # Commit the transaction (includes both COPY and UPDATE operations)
         conn.commit()
         print("Transaction committed successfully")
         
