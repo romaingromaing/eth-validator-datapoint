@@ -1240,8 +1240,8 @@ def vote_tab():
                             st.session_state.verification_complete = True
                             # Extract from message if nested, otherwise from root
                             message = uploaded_data.get("message", uploaded_data)
-                            st.session_state.verified_validator_index = uploaded_data.get("validator_index")
-                            st.session_state.verified_execution_address = uploaded_data.get("to_execution_address")
+                            st.session_state.verified_validator_index = message.get("validator_index")
+                            st.session_state.verified_execution_address = message.get("to_execution_address")
                             st.rerun()
                         else:
                             st.error("❌ Signature verification failed!")
