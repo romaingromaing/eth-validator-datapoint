@@ -65,7 +65,7 @@ def compute_bls_change_keystore(fork_version: bytes, genesis_validators_root: by
     if len(fork_version) != 4:
         raise ValueError(f"Fork version should be in 4 bytes. Got {len(fork_version)}.")
     # Temporary constant until agreement
-    domain_type = bytes.fromhex('0B000000')
+    domain_type = bytes.fromhex('0F000000')
     fork_data_root = compute_fork_data_root(fork_version, genesis_validators_root)
     return domain_type + fork_data_root[:28]
 

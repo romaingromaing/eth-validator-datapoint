@@ -18,9 +18,10 @@ def verify_json(json_file):
             data = json.load(f)
 
         # grab contents from signature file
-        to_execution_address = data.get("to_execution_address")
-        validator_index = data.get("validator_index")
-        keystore_signature = data.get("keystore_signature")
+        message = data.get("message", {})
+        to_execution_address = message.get("to_execution_address")
+        validator_index = message.get("validator_index")
+        keystore_signature = data.get("signature")
 
         # Validator 0 has 0x01 credentials so this won't accidentally trigger
         if not validator_index:
