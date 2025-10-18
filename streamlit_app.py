@@ -466,13 +466,14 @@ def dashboard_tab():
     # Calculate validator status (active/inactive)
     active_validators = len(filtered_df[filtered_df['state'] == 'Active'])
     inactive_validators = len(filtered_df[filtered_df['state'] == 'Inactive'])
+    confirmed_lost_validators = len(filtered_df[filtered_df['state'] == 'Confirmed Lost'])
     
     # Calculate unique deposit addresses statistics
     unique_deposit_addresses = filtered_df['deposit_address'].nunique() if 'deposit_address' in filtered_df.columns else 0
     
     # Overview section
     st.subheader("Overview")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.metric("Total Validators", len(filtered_df))
@@ -482,9 +483,13 @@ def dashboard_tab():
     
     with col3:
         st.metric("Inactive Validators", inactive_validators)
-    
+
     with col4:
+        st.metric("Confirmed Lost Validators", confirmed_lost_validators)
+    
+    with col5:
         st.metric("Total Unique Addresses", unique_deposit_addresses)
+    
     
     st.markdown("---")
     
