@@ -1192,9 +1192,16 @@ def vote_tab():
     
     st.markdown("**a. Download ethstaker-deposit-cli**")
     st.markdown("Download the latest version from the official repository")
+
+    st.link_button(
+    "📥 Download ethstaker-deposit-cli",
+    "https://github.com/eth-educators/ethstaker-deposit-cli/releases/latest",
+    type="primary",
+    use_container_width=True
+)
     
-    if st.button("📥 Download ethstaker-deposit-cli", width='stretch', type="primary"):
-        st.markdown("[Click here to open download page](https://github.com/eth-educators/ethstaker-deposit-cli/releases/tag/v1.0.0)")
+    #if st.button("📥 Download ethstaker-deposit-cli", width='stretch', type="primary"):
+     #   st.markdown("[Click here to open download page](https://github.com/eth-educators/ethstaker-deposit-cli/releases/latest)")
     
     st.markdown("**b. Run the CLI Command**")
     st.markdown("Open a terminal and run the generate-bls-to-execution-change-keystore command. PATH_TO_FILE is the path to your BLS staking key (which is generally a JSON file that begins with keystore-m_)")
