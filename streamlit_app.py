@@ -324,7 +324,7 @@ def dashboard_tab():
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        st.header("Validator Analysis Dashboard")
+        st.header("Current Validators Still On BLS (0x00) Credentials")
     
     # Load data first to get refresh date
     with st.spinner("Loading data from Supabase..."):
@@ -1167,9 +1167,22 @@ def flag_validator_as_lost(validator_index, to_execution_address, verification_j
 
 def vote_tab():
     """
-    New Vote tab for Ethereum Validator Signature Generator
+    Confirm Lost Validator tab for Ethereum Validator Signature Generator
     """
-    st.header("Ethereum Validator Signature Generator")
+    st.header("Confirm Lost Validator with BLS Signature")
+    
+    st.markdown("""
+    If you no longer have access to your validator's mnemonic, one proposed recovery mechanism is to use your 
+    existing BLS staking key to sign a special message confirming that the validator is lost. Under this proposal, 
+    the signed message could then be used to specify a withdrawal address where funds would be returned.
+    
+    All created signatures are stored in our [GitHub repository](https://github.com/0xhaisenberg/eth-validator-datapoint).
+    """)
+    
+    st.warning("""
+    **Note**: This is not yet an active feature of Ethereum. It is a proposed approach and may change before 
+    any future upgrade.
+    """)
     
     st.markdown("---")
     st.subheader("Step 1: Create Keystore Signature")
@@ -1178,13 +1191,13 @@ def vote_tab():
     st.markdown("#### Follow these steps to generate your keystore signature using ethstaker-deposit-cli")
     
     st.markdown("**a. Download ethstaker-deposit-cli**")
-    st.markdown("Download the latest version (at least v0.1.3) from the official repository")
+    st.markdown("Download the latest version from the official repository")
     
     if st.button("📥 Download ethstaker-deposit-cli", width='stretch', type="primary"):
         st.markdown("[Click here to open download page](https://github.com/eth-educators/ethstaker-deposit-cli/releases/tag/v1.0.0)")
     
     st.markdown("**b. Run the CLI Command**")
-    st.markdown("Open a terminal and run the generate-bls-to-execution-change-keystore command")
+    st.markdown("Open a terminal and run the generate-bls-to-execution-change-keystore command. PATH_TO_FILE is the path to your BLS staking key (which is generally a JSON file that begins with keystore-m_)")
     st.code("./deposit generate-bls-to-execution-change-keystore --keystore=PATH_TO_FILE", language="bash")
     
     st.markdown("**c. Locate the Generated File**")
@@ -1353,6 +1366,47 @@ def vote_tab():
         - [EthStaker Discord](https://discord.io/ethstaker)
         """)
 
+def introduction_tab():
+    """
+    Introduction page explaining the dashboard's purpose
+    """
+    st.header("What is this dashboard?")
+    
+    st.markdown("""
+    Quantum computing poses a long-term threat to Ethereum's security. The protocol currently depends on 
+    elliptic curve cryptography, including the BLS signatures used for validator operations. If scalable 
+    quantum computers are developed, these cryptographic systems could be broken. To mitigate this, 
+    Ethereum will eventually need a hard fork to adopt quantum-resistant signature schemes (most likely hash-based).
+    
+    In preparation, validators using legacy BLS (0x00) withdrawal credentials should migrate to 0x01 
+    (execution-layer address) or 0x02 (compounding) credentials. A potential migration path for the future 
+    quantum-safe upgrade could look like this:
+    
+    1. **Pre-upgrade**: Validators can set a post-quantum (PQ) staking key using their existing BLS key.
+    2. **Deadline**: Validators who fail to set their PQ staking key by the upgrade deadline are exited from the validator set.
+    3. **Fallback for lost keys**: If a validator has lost access to their mnemonic, they may still sign a special 
+       message with their BLS staking key. This message both confirms the validator is lost and specifies a 
+       withdrawal address where funds should be returned.
+    
+    For this to work safely, all validators still on 0x00 credentials need to be reached and informed.
+    """)
+    
+    st.markdown("---")
+    st.subheader("The purpose of this dashboard is to:")
+    
+    st.markdown("""
+    **a)** Identify the operator of each 0x00 validator.
+    
+    **b)** If they still control the 0x00 key, encourage and guide them to upgrade to 0x01 (or 0x02).
+    
+    **c)** If they do not control the 0x00 key (e.g. lost mnemonic), help them prepare the required BLS-signed 
+    message declaring the validator lost. This message can then be submitted through the **Confirm Lost Validator** tab.
+    """)
+    
+    st.markdown("---")
+    st.info("👉 Navigate to the **Dashboard** tab to view validators, or the **Confirm Lost Validator** tab if you need to submit a recovery signature.")
+
+
 def main():
     st.set_page_config(
         page_title="Validator Analysis Dashboard",
@@ -1361,7 +1415,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    st.title("Validator Analysis Platform")
+    st.title("Validator Migration Tracker")
     
     # Start scheduler if configured
     has_admin_access = initialize_admin_auth()
@@ -1376,16 +1430,19 @@ def main():
         st.session_state.force_dashboard = False
     
     # Create tabs - Updated structure
-    tab1, tab2, tab3 = st.tabs(["Admin", "Dashboard", "Vote"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Introduction", "Dashboard", "Confirm Lost Validator", "Admin"])
     
     with tab1:
-        admin_tab()
-    
+        introduction_tab()
+
     with tab2:
         dashboard_tab()
-    
+
     with tab3:
         vote_tab()
+
+    with tab4:
+        admin_tab()
 
 if __name__ == "__main__":
     main()
