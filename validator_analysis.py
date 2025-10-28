@@ -117,41 +117,12 @@ def upload_csv_to_supabase(csv_file_path, config):
         # Also check environment variable for scheduled runs
         if os.getenv('CLEAR_EXISTING_DATA', '').lower() == 'true':
             clear_data = True
-
+            
         if clear_data:
-            print(f"Preserving validators marked as 'lost' before clearing data...")
-
-            # Step 1: Fetch all validators marked as 'lost' with their verification data
-            cur.execute(f"""
-                SELECT index, designation, to_execution_address, verification_json, state
-                FROM {config.table_name}
-                WHERE designation = 'lost'
-            """)
-            lost_validators = cur.fetchall()
-            lost_validators_data = []
-
-            for row in lost_validators:
-                lost_validators_data.append({
-                    'index': row[0],
-                    'designation': row[1],
-                    'to_execution_address': row[2],
-                    'verification_json': row[3],
-                    'state': row[4]
-                })
-
-            print(f"Found {len(lost_validators_data)} validators marked as 'lost' to preserve")
-
-            # Step 2: Clear existing data
-            print(f"Clearing existing data from {config.table_name}...")
-            cur.execute(f"DELETE FROM {config.table_name}")
-            deleted_count = cur.rowcount
-            print(f"Deleted {deleted_count} existing records")
-
-            # Store lost validators data for later restoration
-            # We'll use this after the COPY command
-            conn._lost_validators_data = lost_validators_data
-        else:
-            conn._lost_validators_data = []
+                    print(f"Clearing existing data from {config.table_name}...")
+                    cur.execute(f"DELETE FROM {config.table_name}")
+                    deleted_count = cur.rowcount
+                    print(f"Deleted {deleted_count} existing records")
         
         # Read CSV headers to verify column structure
         import pandas as pd
@@ -666,7 +637,7 @@ def main():
         csv_columns = [
             'index', 
             'pubkey', 
-            'status',  # Fixed: was 'state', should be 'status'
+            'state',
             'withdrawal_credentials', 
             'deposit_address', 
             'last_transaction_time', 
@@ -681,7 +652,7 @@ def main():
             print(f"Available columns: {list(df_with_transaction_data.columns)}")
             # Add missing columns with default values
             for col in missing_columns:
-                if col == 'status':
+                if col == 'state':
                     df_with_transaction_data[col] = df_with_transaction_data.get('state', None)
         
         # Reorder DataFrame columns to match database schema
