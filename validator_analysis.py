@@ -170,40 +170,6 @@ def upload_csv_to_supabase(csv_file_path, config):
         
         print("CSV data uploaded successfully")
         
-        # Step 3: Restore lost validators after repopulating
-        if hasattr(conn, '_lost_validators_data') and conn._lost_validators_data:
-            print(f"\nRestoring {len(conn._lost_validators_data)} validators marked as 'lost'...")
-            
-            restored_count = 0
-            for validator in conn._lost_validators_data:
-                try:
-                    # Update the repopulated record to restore lost status and verification JSON
-                    cur.execute(f"""
-                        UPDATE {config.table_name}
-                        SET designation = %s,
-                            to_execution_address = %s,
-                            verification_json = %s,
-                            state = %s
-                        WHERE index = %s
-                    """, (
-                        validator['designation'],
-                        validator['to_execution_address'],
-                        json.dumps(validator['verification_json']) if validator['verification_json'] else None,
-                        'Confirmed Lost',  # Force state to Confirmed Lost
-                        validator['index']
-                    ))
-                    
-                    if cur.rowcount > 0:
-                        restored_count += 1
-                        print(f"  ✓ Restored validator {validator['index']} as lost")
-                    else:
-                        print(f"  ⚠ Validator {validator['index']} not found in new data (may have been removed)")
-                        
-                except Exception as e:
-                    print(f"  ✗ Failed to restore validator {validator['index']}: {e}")
-            
-            print(f"Successfully restored {restored_count}/{len(conn._lost_validators_data)} lost validators")
-        
         # Commit the transaction (includes both COPY and UPDATE operations)
         conn.commit()
         print("Transaction committed successfully")
@@ -637,7 +603,7 @@ def main():
         csv_columns = [
             'index', 
             'pubkey', 
-            'state',
+            'status',  # Fixed: was 'state', should be 'status'
             'withdrawal_credentials', 
             'deposit_address', 
             'last_transaction_time', 
@@ -652,7 +618,7 @@ def main():
             print(f"Available columns: {list(df_with_transaction_data.columns)}")
             # Add missing columns with default values
             for col in missing_columns:
-                if col == 'state':
+                if col == 'status':
                     df_with_transaction_data[col] = df_with_transaction_data.get('state', None)
         
         # Reorder DataFrame columns to match database schema

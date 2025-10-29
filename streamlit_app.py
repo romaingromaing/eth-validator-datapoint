@@ -502,7 +502,7 @@ def dashboard_tab():
     
     # Show key columns by default if they exist
     key_columns = []
-    preferred_columns = ['index', 'pubkey', 'state', 'deposit_address', 'operator', 'last_transaction_time', 'to_execution_address']
+    preferred_columns = ['index', 'pubkey', 'state', 'deposit_address', 'operator', 'last_transaction_time', 'to_execution_address', 'to_execution_address_2']
     
     for col in preferred_columns:
         if col in filtered_df.columns:
@@ -1139,6 +1139,7 @@ def scheduler_section():
 def flag_validator_as_lost(validator_index, to_execution_address, verification_json):
     """
     Flag a validator as lost in the database and store the verification JSON
+    Handles both first-time verification and subsequent verifications with different addresses
     
     Args:
         validator_index: The validator index
@@ -1153,15 +1154,53 @@ def flag_validator_as_lost(validator_index, to_execution_address, verification_j
     
     # Try both string and int versions
     for idx in [validator_index, int(validator_index) if str(validator_index).isdigit() else validator_index]:
-        response = supabase.table(config.table_name).update({
-            'designation': 'lost',
-            'to_execution_address': to_execution_address,
-            'verification_json': verification_json,  # Store the entire JSON
-            'updated_at': datetime.now().isoformat()
-        }).eq('index', idx).execute()
+        # First, check if this validator already has a verification
+        existing = supabase.table(config.table_name).select("*").eq('index', idx).execute()
         
-        if response.data and len(response.data) > 0:
-            return True, f"Updated validator {validator_index}"
+        if existing.data and len(existing.data) > 0:
+            validator_record = existing.data[0]
+            existing_address = validator_record.get('to_execution_address')
+            existing_json = validator_record.get('verification_json')
+            
+            # Check if this is a re-verification with a different address
+            if existing_json and existing_address:
+                if existing_address != to_execution_address:
+                    # This is a second verification with a different address
+                    # Save only the new execution address to to_execution_address_2
+                    response = supabase.table(config.table_name).update({
+                        'to_execution_address_2': to_execution_address,
+                        'designation': 'lost',
+                        'updated_at': datetime.now().isoformat()
+                    }).eq('index', idx).execute()
+                    
+                    if response.data and len(response.data) > 0:
+                        return True, f"Updated validator {validator_index} with second execution address"
+                    else:
+                        return False, f"Failed to update second execution address for validator {validator_index}"
+                else:
+                    # Same address, just update designation if needed
+                    response = supabase.table(config.table_name).update({
+                        'designation': 'lost',
+                        'updated_at': datetime.now().isoformat()
+                    }).eq('index', idx).execute()
+                    
+                    if response.data and len(response.data) > 0:
+                        return True, f"Validator {validator_index} already verified with same address"
+                    else:
+                        return False, f"Failed to update validator {validator_index}"
+            
+            # First verification - save everything
+            response = supabase.table(config.table_name).update({
+                'designation': 'lost',
+                'to_execution_address': to_execution_address,
+                'verification_json': verification_json,
+                'updated_at': datetime.now().isoformat()
+            }).eq('index', idx).execute()
+            
+            if response.data and len(response.data) > 0:
+                return True, f"Updated validator {validator_index} with initial verification"
+        else:
+            continue
     
     return False, f"Validator {validator_index} not found or update failed"
 
@@ -1323,6 +1362,19 @@ def vote_tab():
                 if st.session_state.flag_result:
                     if st.session_state.flag_result['success']:
                         st.success(f"✅ {st.session_state.flag_result['message']}")
+                        
+                        # Show additional info if this was a second address update
+                        if "second execution address" in st.session_state.flag_result['message']:
+                            st.info("""
+                            **Second Execution Address Recorded**
+                            
+                            This validator has now been verified twice with different execution addresses:
+                            - First address: Stored in `to_execution_address`
+                            - Second address: Stored in `to_execution_address_2`
+                            
+                            Both addresses are preserved in the database.
+                            """)
+                        
                         st.balloons()
                         if st.button("Flag Another Validator"):
                             st.session_state.verification_complete = False
